@@ -74,6 +74,7 @@ class TeamMatcher:
         name = re.sub(r'\bU\d{1,2}\b', '', team_name)
         name = re.sub(r'\b\d{1,2}[BG]\b', '', name)  # 15B, 14G, etc.
         name = re.sub(r'\b\d{4}[BG]\b', '', name)  # 2015B, etc.
+        name = re.sub(r'\b\d{2}\b', '', name)  # Standalone 2-digit numbers (like "15" in "Alliance FC 15")
         
         # Extract first significant words (likely club name)
         # Look for patterns like "FC", "SC", or common club endings
