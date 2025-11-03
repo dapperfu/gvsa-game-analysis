@@ -1,13 +1,71 @@
 #!/usr/bin/env python3
 """
-Parse seasons.jsp HTML to extract available divisions.
+Parse seasons.jsp HTML to extract available divisions and seasons.
 
 This module parses the HTML response from seasons.jsp to extract
-the list of available divisions with their IDs and parameters.
+the list of available divisions with their IDs and parameters, and
+also identifies available seasons to scrape.
 """
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set, Tuple
 from bs4 import BeautifulSoup
 import re
+
+
+def parse_seasons_list(html_content: str) -> List[Dict[str, str]]:
+    """
+    Parse available seasons from seasons.jsp HTML.
+    
+    Looks for a season selector or extracts unique seasons from divisions.
+    
+    Parameters
+    ----------
+    html_content : str
+        The HTML content from seasons.jsp
+        
+    Returns
+    -------
+    List[Dict[str, str]]
+        List of season dictionaries with keys:
+        - year_season: str
+        - season_name: str
+        - season_type: str
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+    seasons: Set[Tuple[str, str, str]] = set()
+    
+    # Look for a season selector
+    season_select = soup.find('select', {'name': 'season'})
+    if season_select:
+        options = season_select.find_all('option')
+        for option in options:
+            value = option.get('value', '')
+            if value and value != 'Seasons':
+                # Parse season value format
+                parts = value.split(',')
+                if len(parts) >= 3:
+                    year_season = parts[0].strip()
+                    season_name = parts[2].strip()
+                    season_type = 'F' if 'Fall' in season_name else 'S'
+                    seasons.add((year_season, season_name, season_type))
+    
+    # If no season selector, extract from divisions
+    if not seasons:
+        divisions = parse_divisions(html_content)
+        for div in divisions:
+            seasons.add((
+                div['year_season'],
+                div['season_name'],
+                div['season_type']
+            ))
+    
+    return [
+        {
+            'year_season': y,
+            'season_name': s,
+            'season_type': t
+        }
+        for y, s, t in sorted(seasons)
+    ]
 
 
 def parse_divisions(html_content: str) -> List[Dict[str, Any]]:
@@ -67,4 +125,3 @@ def parse_divisions(html_content: str) -> List[Dict[str, Any]]:
                 continue
     
     return divisions
-
