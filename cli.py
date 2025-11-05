@@ -306,6 +306,108 @@ def divisions(ctx: click.Context, year: Optional[int], season: Optional[str],
         sys.exit(1)
 
 
+@cli.command('csv-links')
+@click.option('--division-name', type=str,
+              help='Filter by division name (exact or partial match)')
+@click.option('--year', type=int,
+              help='Filter by year (e.g., 2025)')
+@click.option('--season', type=str,
+              help='Filter by season name (e.g., "Fall 2025")')
+@click.option('--format', 'output_format', default='table',
+              type=click.Choice(['table', 'json', 'csv'], case_sensitive=False),
+              help='Output format (default: table)')
+@click.pass_context
+def csv_links(ctx: click.Context, division_name: Optional[str], year: Optional[int],
+              season: Optional[str], output_format: str) -> None:
+    """
+    Show CSV download links for divisions.
+    
+    Extracts CSV download links from cached HTML files for each division.
+    These links can be used to download CSV data directly from GVSA website.
+    
+    Examples:
+    
+        gvsa csv-links --year 2025 --season Fall
+    
+        gvsa csv-links --division-name "U11 Boys"
+    
+        gvsa csv-links --format json
+    """
+    from scraper import GVSAScraper
+    from pathlib import Path
+    from parse_standings import parse_csv_link
+    
+    db_instance = get_db(ctx)
+    scraper = GVSAScraper(use_cache=True)
+    
+    @db_session
+    def get_divisions_with_csv_links() -> List[Dict[str, Any]]:
+        """Get divisions with CSV links from cached HTML."""
+        query = select(d for d in Division)
+        
+        # Filter by year and season
+        if year and season:
+            season_type_norm = season.capitalize()
+            season_type_str = 'Fall' if season_type_norm == 'Fall' else 'Spring'
+            season_obj = db_instance.get_season(year, season_type_str)
+            if season_obj:
+                query = select(d for d in Division if d.season == season_obj)
+            else:
+                return []
+        elif year:
+            seasons_list = list(select(s for s in Season if s.year == year))
+            if seasons_list:
+                query = select(d for d in Division if d.season in seasons_list)
+            else:
+                return []
+        elif season:
+            season_type_norm = season.capitalize()
+            season_type_str = 'Fall' if season_type_norm == 'Fall' else 'Spring'
+            query = select(d for d in Division if d.season.season_type == season_type_str)
+        
+        # Filter by division name
+        if division_name:
+            division_name_upper = division_name.upper()
+            query = select(d for d in query if division_name_upper in d.division_name.upper())
+        
+        divisions_list = list(query)
+        result = []
+        
+        for division in divisions_list:
+            # Get cached HTML file
+            cache_dir_name = f"{division.season.year}_{division.season.season_type}"
+            sanitized_name = division.division_name.replace('/', '_').replace(' ', '_')
+            html_path = scraper.CACHE_DIR / cache_dir_name / f"{sanitized_name}.html"
+            
+            csv_link: Optional[str] = None
+            if html_path.exists():
+                try:
+                    html_content = html_path.read_text(encoding='utf-8')
+                    csv_link = parse_csv_link(html_content)
+                except Exception:
+                    pass
+            
+            result.append({
+                'division_name': division.division_name,
+                'season': division.season.season_name,
+                'year': division.season.year,
+                'csv_link': csv_link or 'Not available'
+            })
+        
+        return sorted(result, key=lambda x: (x['year'], x['season'], x['division_name']))
+    
+    try:
+        data = get_divisions_with_csv_links()
+        headers = ['division_name', 'season', 'year', 'csv_link']
+        print_output(data, output_format, headers)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        import traceback
+        if ctx.obj['verbose']:
+            traceback.print_exc()
+        sys.exit(1)
+
+
 @cli.command()
 @click.option('--search', type=str,
               help='Search team name (fuzzy matching)')

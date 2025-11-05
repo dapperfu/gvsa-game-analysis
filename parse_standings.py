@@ -447,6 +447,57 @@ def parse_division_info(html_content: str) -> Dict[str, str]:
     return info
 
 
+def parse_csv_link(html_content: str) -> Optional[str]:
+    """
+    Parse CSV download link from standings.jsp HTML.
+    
+    The CSV link is typically at the bottom of the page in a div with
+    class "exportlinks" with a link containing "export csv" class.
+    
+    Parameters
+    ----------
+    html_content : str
+        The HTML content from standings.jsp
+        
+    Returns
+    -------
+    Optional[str]
+        CSV download URL (relative or absolute), or None if not found
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    # Find the exportlinks div
+    export_div = soup.find('div', class_='exportlinks')
+    if not export_div:
+        return None
+    
+    # Find the CSV link (has class "export csv")
+    csv_link = export_div.find('a', class_='export csv')
+    if not csv_link:
+        # Try alternative: look for link containing "csv" in text or class
+        csv_link = export_div.find('a', string=re.compile(r'CSV', re.I))
+        if not csv_link:
+            # Try finding any link with "csv" in href
+            for link in export_div.find_all('a'):
+                href = link.get('href', '')
+                if 'csv' in href.lower() or 'd-49682-e=1' in href:
+                    csv_link = link
+                    break
+    
+    if csv_link:
+        href = csv_link.get('href', '')
+        if href:
+            # Make it absolute URL if it's relative
+            if href.startswith('/'):
+                return f"https://www.gvsoccer.org{href}"
+            elif href.startswith('http'):
+                return href
+            else:
+                return f"https://www.gvsoccer.org/{href}"
+    
+    return None
+
+
 def parse_standings(html_content: str) -> Dict[str, Any]:
     """
     Parse complete standings.jsp HTML to extract all data.
@@ -463,10 +514,12 @@ def parse_standings(html_content: str) -> Dict[str, Any]:
         - division_info: Dict[str, str]
         - teams: List[Dict[str, Any]]
         - matches: List[Dict[str, Any]]
+        - csv_link: Optional[str] - CSV download URL
     """
     return {
         'division_info': parse_division_info(html_content),
         'teams': parse_team_standings(html_content),
-        'matches': parse_match_results(html_content)
+        'matches': parse_match_results(html_content),
+        'csv_link': parse_csv_link(html_content)
     }
 
