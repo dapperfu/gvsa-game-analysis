@@ -6,10 +6,11 @@ This module provides functionality to manage the database using PonyORM,
 including team name matching, club detection, and data persistence.
 """
 from typing import List, Dict, Any, Optional, Tuple
-from pony.orm import db_session, select, get, commit
+from pony.orm import db_session, select, commit
 import re
 from thefuzz import fuzz, process
 from models import db, Season, Division, Club, Team, TeamSeason, Match
+from team_name_parser import parse_team_name, normalize_team_identifier, extract_base_identifier
 
 
 class TeamMatcher:
@@ -101,6 +102,23 @@ class TeamMatcher:
         return club_name
     
     @staticmethod
+    def parse_team_name(team_name: str) -> Dict[str, Any]:
+        """
+        Parse team name using NLP parser.
+        
+        Parameters
+        ----------
+        team_name : str
+            Team name to parse
+            
+        Returns
+        -------
+        Dict[str, Any]
+            Parsed team data from team_name_parser.parse_team_name()
+        """
+        return parse_team_name(team_name)
+    
+    @staticmethod
     def find_matching_team(team_name: str, existing_teams: List[Team]) -> Optional[Team]:
         """
         Find matching team from existing teams using fuzzy matching.
@@ -140,6 +158,71 @@ class TeamMatcher:
                     return team
         
         return None
+    
+    @staticmethod
+    def find_team_by_birth_year(birth_year: int, gender: str, club_name: str, 
+                                designation: Optional[str] = None) -> Optional[Team]:
+        """
+        Find team by birth year, gender, club, and optionally designation.
+        
+        Uses the designation matching rule: if a team exists without designation
+        in a previous year, and a team with designation appears in a later year,
+        match them as the same team.
+        
+        NOTE: This method must be called within a db_session context.
+        
+        Parameters
+        ----------
+        birth_year : int
+            Birth year of the players
+        gender : str
+            "Boys" or "Girls"
+        club_name : str
+            Club name
+        designation : Optional[str]
+            Color/descriptor designation (optional)
+            
+        Returns
+        -------
+        Optional[Team]
+            Matching team or None if not found
+        """
+        # Normalize club name
+        normalized_club = TeamMatcher.normalize_name(club_name)
+        
+        # Search for teams with matching birth year, gender, and club
+        # NOTE: This requires db_session context (typically called from within @db_session method)
+        try:
+            candidates = list(select(
+                t for t in Team
+                if t.birth_year == birth_year
+                and t.gender == gender
+                and t.base_club_name == normalized_club
+            ))
+        except Exception:
+            # If not in db_session, return None
+            return None
+        
+        if not candidates:
+            return None
+        
+        # If designation provided, prefer exact match
+        if designation:
+            designation_upper = designation.upper()
+            for team in candidates:
+                if team.designation and team.designation.upper() == designation_upper:
+                    return team
+            # If no exact match, return first candidate (designation may have been added)
+            # This implements the rule: if team without designation existed before,
+            # later team with designation is the same team
+            if candidates:
+                return candidates[0]
+        else:
+            # No designation specified - return first match (any designation is fine)
+            if candidates:
+                return candidates[0]
+        
+        return None
 
 
 class GVSA_Database:
@@ -161,10 +244,14 @@ class GVSA_Database:
         self.db_path = db_path
         # Check if already bound (in case of multiple instances)
         try:
-            db.bind(provider='sqlite', filename=db_path, create_db=True)
-            db.generate_mapping(create_tables=True)
+            # Try to access schema to see if already bound
+            _ = db.schema
+            # Already bound, just generate mapping if not already done
+            if not db.schema:
+                db.generate_mapping(create_tables=True)
         except Exception:
-            # Already bound, just generate mapping
+            # Not bound, bind and generate mapping
+            db.bind(provider='sqlite', filename=db_path, create_db=True)
             db.generate_mapping(create_tables=True)
     
     @db_session
@@ -187,13 +274,18 @@ class GVSA_Database:
         Season
             Season entity
         """
-        season = Season.get(
-            year_season=year_season,
-            season_name=season_name,
-            season_type=season_type
-        )
+        # Use select() instead of get() to handle multiple matches
+        seasons = list(select(
+            s for s in Season
+            if s.year_season == year_season
+            and s.season_name == season_name
+            and s.season_type == season_type
+        ))
         
-        if not season:
+        if seasons:
+            # If multiple seasons exist, return the first one (most recent)
+            season = seasons[0]
+        else:
             season = Season(
                 year_season=year_season,
                 season_name=season_name,
@@ -223,12 +315,17 @@ class GVSA_Database:
         Division
             Division entity
         """
-        division = Division.get(
-            division_id=division_id,
-            season=season
-        )
+        # Use select() instead of get() to handle multiple matches
+        divisions = list(select(
+            d for d in Division
+            if d.division_id == division_id
+            and d.season == season
+        ))
         
-        if not division:
+        if divisions:
+            # If multiple divisions exist, return the first one
+            division = divisions[0]
+        else:
             division = Division(
                 division_id=division_id,
                 division_name=division_name,
@@ -268,6 +365,9 @@ class GVSA_Database:
         """
         Get or create a team, matching across seasons if possible.
         
+        Uses enhanced parsing to extract birth year, gender, and club information.
+        Matches teams by birth year + gender + club when possible.
+        
         Parameters
         ----------
         team_name : str
@@ -286,7 +386,24 @@ class GVSA_Database:
         if team:
             return team, False
         
-        # Try fuzzy matching
+        # Parse team name to extract structured information
+        parsed = TeamMatcher.parse_team_name(team_name)
+        
+        # Try matching by birth year + gender + club if we have that data
+        if parsed.get('parsed') and parsed.get('birth_year') and parsed.get('gender'):
+            birth_year = parsed['birth_year']
+            gender = parsed['gender']
+            club_name = parsed.get('club_name')
+            designation = parsed.get('designation')
+            
+            if club_name:
+                matched_team = TeamMatcher.find_team_by_birth_year(
+                    birth_year, gender, club_name, designation
+                )
+                if matched_team:
+                    return matched_team, False
+        
+        # Try fuzzy matching as fallback
         existing_teams = list(select(t for t in Team))
         matched_team = TeamMatcher.find_matching_team(team_name, existing_teams)
         
@@ -296,8 +413,20 @@ class GVSA_Database:
         # Create new team
         team = Team(canonical_name=normalized)
         
+        # Store parsed information
+        if parsed.get('parsed'):
+            if parsed.get('birth_year'):
+                team.birth_year = parsed['birth_year']
+            if parsed.get('gender'):
+                team.gender = parsed['gender']
+            if parsed.get('designation'):
+                team.designation = parsed['designation']
+            if parsed.get('club_name'):
+                normalized_club = TeamMatcher.normalize_name(parsed['club_name'])
+                team.base_club_name = normalized_club
+        
         # Try to associate with a club
-        club_name = TeamMatcher.extract_club_name(team_name)
+        club_name = parsed.get('club_name') or TeamMatcher.extract_club_name(team_name)
         if club_name:
             club = self.get_or_create_club(club_name)
             team.club = club
@@ -340,7 +469,12 @@ class GVSA_Database:
             team, _ = self.get_or_create_team(team_name)
             
             # Create or update TeamSeason
-            team_season = TeamSeason.get(team=team, division=division)
+            # Use select() instead of get() to handle multiple matches
+            team_seasons_list = list(select(
+                ts for ts in TeamSeason
+                if ts.team == team and ts.division == division
+            ))
+            team_season = team_seasons_list[0] if team_seasons_list else None
             if not team_season:
                 team_season = TeamSeason(
                     team=team,
@@ -383,7 +517,11 @@ class GVSA_Database:
                 # Teams might not be in standings, try to find them
                 if not home_team_season:
                     home_team, _ = self.get_or_create_team(home_team_name)
-                    home_team_season = TeamSeason.get(team=home_team, division=division)
+                    home_team_seasons_list = list(select(
+                        ts for ts in TeamSeason
+                        if ts.team == home_team and ts.division == division
+                    ))
+                    home_team_season = home_team_seasons_list[0] if home_team_seasons_list else None
                     if not home_team_season:
                         home_team_season = TeamSeason(
                             team=home_team,
@@ -394,7 +532,11 @@ class GVSA_Database:
                 
                 if not away_team_season:
                     away_team, _ = self.get_or_create_team(away_team_name)
-                    away_team_season = TeamSeason.get(team=away_team, division=division)
+                    away_team_seasons_list = list(select(
+                        ts for ts in TeamSeason
+                        if ts.team == away_team and ts.division == division
+                    ))
+                    away_team_season = away_team_seasons_list[0] if away_team_seasons_list else None
                     if not away_team_season:
                         away_team_season = TeamSeason(
                             team=away_team,

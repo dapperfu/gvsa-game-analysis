@@ -6,7 +6,7 @@ PYTHON = ${VENV}/bin/python3
 PIP = ${VENV}/bin/pip
 
 # Database file
-DB = gvsa_data.db
+DB = gvsa_data2.db
 
 help:
 	@echo "Available targets:"

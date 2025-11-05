@@ -113,11 +113,23 @@ class Team(db.Entity):
         The club this team belongs to
     seasons : Set[TeamSeason]
         Team appearances across different seasons
+    birth_year : Optional[int]
+        Birth year extracted from team name (e.g., 2013 from "2013B")
+    gender : Optional[str]
+        Gender extracted from team name ("Boys" or "Girls")
+    designation : Optional[str]
+        Color/descriptor extracted from team name (e.g., "Red", "White", "Green")
+    base_club_name : Optional[str]
+        Normalized club name for matching
     """
     id = PrimaryKey(int, auto=True)
     canonical_name = Required(str, unique=True)
     club = Optional(Club)
     seasons = Set('TeamSeason')
+    birth_year = Optional(int)
+    gender = Optional(str)
+    designation = Optional(str)
+    base_club_name = Optional(str)
     
     def __str__(self) -> str:
         return self.canonical_name
@@ -155,6 +167,10 @@ class TeamSeason(db.Entity):
         Goal differential
     scraped_at : datetime
         When this record was scraped
+    home_matches : Set[Match]
+        Matches where this team was home
+    away_matches : Set[Match]
+        Matches where this team was away
     """
     id = PrimaryKey(int, auto=True)
     team = Required(Team)
@@ -169,6 +185,8 @@ class TeamSeason(db.Entity):
     goals_against = Required(int, default=0)
     goal_differential = Required(int, default=0)
     scraped_at = Required(datetime, default=datetime.now)
+    home_matches = Set('Match', reverse='home_team')
+    away_matches = Set('Match', reverse='away_team')
     
     def __str__(self) -> str:
         return f"{self.team_name} in {self.division}"

@@ -39,13 +39,30 @@ def parse_seasons_list(html_content: str) -> List[Dict[str, str]]:
         options = season_select.find_all('option')
         for option in options:
             value = option.get('value', '')
-            if value and value != 'Seasons':
-                # Parse season value format
+            text = option.get_text(strip=True)
+            if value and value != 'Seasons' and text and text != '-Select Season-':
+                # Parse season value format: "year_season,season_id1,season_id2,season_name"
+                # Example: "2025/2026 ,      2775,      2846,Fall 2025                     "
                 parts = value.split(',')
-                if len(parts) >= 3:
+                if len(parts) >= 4:
                     year_season = parts[0].strip()
-                    season_name = parts[2].strip()
-                    season_type = 'F' if 'Fall' in season_name else 'S'
+                    season_id1 = parts[1].strip() if len(parts) > 1 else ''
+                    season_id2 = parts[2].strip() if len(parts) > 2 else ''
+                    season_name = parts[3].strip()
+                    # Determine season type from name
+                    if 'Fall' in season_name:
+                        season_type = 'F'
+                    elif 'Spring' in season_name:
+                        season_type = 'S'
+                    else:
+                        season_type = 'F'  # Default to Fall
+                    # Store full value for later use
+                    seasons.add((year_season, season_name, season_type, value))
+                elif len(parts) >= 1:
+                    # Fallback: try to extract from text
+                    year_season = parts[0].strip() if parts[0].strip() else text
+                    season_name = text
+                    season_type = 'F' if 'Fall' in text else 'S'
                     seasons.add((year_season, season_name, season_type))
     
     # If no season selector, extract from divisions
@@ -58,14 +75,25 @@ def parse_seasons_list(html_content: str) -> List[Dict[str, str]]:
                 div['season_type']
             ))
     
-    return [
-        {
-            'year_season': y,
-            'season_name': s,
-            'season_type': t
-        }
-        for y, s, t in sorted(seasons)
-    ]
+    result = []
+    for item in sorted(seasons):
+        if len(item) == 4:
+            y, s, t, v = item
+            result.append({
+                'year_season': y,
+                'season_name': s,
+                'season_type': t,
+                'season_value': v  # Full value for POST requests
+            })
+        else:
+            y, s, t = item
+            result.append({
+                'year_season': y,
+                'season_name': s,
+                'season_type': t,
+                'season_value': None
+            })
+    return result
 
 
 def parse_divisions(html_content: str) -> List[Dict[str, Any]]:
