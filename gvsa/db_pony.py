@@ -22,9 +22,58 @@ class TeamMatcher:
     """
     
     @staticmethod
+    def clean_club_name(name: str) -> str:
+        """
+        Clean club name for display/storage purposes.
+        
+        Removes artifacts like "(N teams)", "//", and normalizes
+        specific club name variations.
+        
+        Parameters
+        ----------
+        name : str
+            Original club name
+            
+        Returns
+        -------
+        str
+            Cleaned club name
+        """
+        # Remove extra whitespace
+        name = ' '.join(name.split())
+        
+        # Remove patterns like "(N teams)" where N is a number
+        name = re.sub(r'\s*\(\d+\s+teams?\)\s*$', '', name, flags=re.IGNORECASE)
+        
+        # Remove "//" and similar separator artifacts
+        name = re.sub(r'\s*//+\s*', ' ', name)
+        name = re.sub(r'\s*/\s*$', '', name)
+        name = re.sub(r'^\s*/\s*', '', name)
+        
+        # Clean up common separators and trailing artifacts
+        name = re.sub(r'\s*-\s*$', '', name)
+        name = re.sub(r'\s*-\s*-\s*', ' ', name)
+        
+        # Handle specific club name normalizations
+        # TRI-CITIES STRIKERS variations -> TRI_CITIES
+        if re.search(r'tri-?cities\s+strikers', name, re.IGNORECASE):
+            name = 'TRI_CITIES'
+        # West Coast United variations -> West Coast United
+        elif re.search(r'west\s+coast\s+united', name, re.IGNORECASE):
+            # Remove any suffixes like "Blk - RP", "//", etc.
+            name = re.sub(r'\s+Blk\s*-\s*RP\s*$', '', name, flags=re.IGNORECASE)
+            name = re.sub(r'\s+//.*$', '', name)
+            name = 'West Coast United'
+        
+        return name.strip()
+    
+    @staticmethod
     def normalize_name(name: str) -> str:
         """
         Normalize team name for matching.
+        
+        Uses clean_club_name to clean the name first, then normalizes
+        for case-insensitive matching.
         
         Parameters
         ----------
@@ -34,10 +83,10 @@ class TeamMatcher:
         Returns
         -------
         str
-            Normalized name
+            Normalized name (lowercase) for matching
         """
-        # Remove extra whitespace
-        name = ' '.join(name.split())
+        # Clean the name first
+        name = TeamMatcher.clean_club_name(name)
         
         # Convert to lowercase for matching
         normalized = name.lower()
@@ -402,13 +451,21 @@ class GVSA_Database:
         Club
             Club entity
         """
+        # Clean the club name for display
+        cleaned_name = TeamMatcher.clean_club_name(club_name)
+        # Normalize for matching
         normalized = TeamMatcher.normalize_name(club_name)
         
         club = Club.get(canonical_name=normalized)
         
         if not club:
-            club = Club(name=club_name, canonical_name=normalized)
+            club = Club(name=cleaned_name, canonical_name=normalized)
             commit()
+        else:
+            # Update the name if it's different (to use cleaned version)
+            if club.name != cleaned_name:
+                club.name = cleaned_name
+                commit()
         
         return club
     
