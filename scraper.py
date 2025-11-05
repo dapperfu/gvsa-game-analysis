@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
 from parse_seasons import parse_divisions, parse_seasons_list
-from parse_standings import parse_standings
+from parse_standings import parse_standings, parse_csv_link
 from parse_csv import parse_csv_standings, download_csv_standings
 from db_pony import GVSA_Database
 
@@ -86,12 +86,13 @@ class GVSAScraper:
         sanitized = sanitized.strip('._')
         return sanitized
     
-    def get_cache_path(self, division: Dict[str, Any]) -> Tuple[Path, Path]:
+    def get_cache_path(self, division: Dict[str, Any]) -> Tuple[Path, Path, Path]:
         """
-        Get the cache file paths for a division (HTML and metadata).
+        Get the cache file paths for a division (HTML, metadata, and CSV).
         
         Structure: html_cache/{year}_{season_type}/{division_name}.html
         Metadata: html_cache/{year}_{season_type}/{division_name}.json
+        CSV: html_cache/{year}_{season_type}/{division_name}.csv
         
         Examples: html_cache/2025_Fall/, html_cache/2025_Spring/
         
@@ -102,8 +103,8 @@ class GVSAScraper:
             
         Returns
         -------
-        tuple[Path, Path]
-            Tuple of (HTML file path, metadata JSON file path)
+        tuple[Path, Path, Path]
+            Tuple of (HTML file path, metadata JSON file path, CSV file path)
         """
         # Extract year from season_name (e.g., "Fall 2025" -> "2025")
         season_name = division.get('season_name', '')
@@ -127,8 +128,9 @@ class GVSAScraper:
         
         html_path = cache_dir / f"{division_name}.html"
         json_path = cache_dir / f"{division_name}.json"
+        csv_path = cache_dir / f"{division_name}.csv"
         
-        return (html_path, json_path)
+        return (html_path, json_path, csv_path)
     
     def get_cached_html(self, division: Dict[str, Any]) -> Optional[str]:
         """
@@ -147,7 +149,7 @@ class GVSAScraper:
         if not self.use_cache:
             return None
         
-        html_path, _ = self.get_cache_path(division)
+        html_path, _, _ = self.get_cache_path(division)
         
         with self.cache_lock:
             if html_path.exists():
@@ -177,7 +179,7 @@ class GVSAScraper:
         if not self.use_cache:
             return None
         
-        _, json_path = self.get_cache_path(division)
+        _, json_path, _ = self.get_cache_path(division)
         
         with self.cache_lock:
             if json_path.exists():
@@ -204,7 +206,7 @@ class GVSAScraper:
         if not self.use_cache:
             return
         
-        html_path, json_path = self.get_cache_path(division)
+        html_path, json_path, csv_path = self.get_cache_path(division)
         
         with self.cache_lock:
             try:
@@ -242,8 +244,62 @@ class GVSAScraper:
                     'season_type': season_type
                 }
                 json_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+                
+                # Note: CSV is cached separately by save_csv_cache()
             except Exception as e:
                 print(f"  - Error saving cache: {e}")
+    
+    def get_cached_csv(self, division: Dict[str, Any]) -> Optional[str]:
+        """
+        Get cached CSV for a division if it exists.
+        
+        Parameters
+        ----------
+        division : Dict[str, Any]
+            Division dictionary
+            
+        Returns
+        -------
+        Optional[str]
+            Cached CSV content or None if not found
+        """
+        if not self.use_cache:
+            return None
+        
+        _, _, csv_path = self.get_cache_path(division)
+        
+        with self.cache_lock:
+            if csv_path.exists():
+                try:
+                    content = csv_path.read_text(encoding='utf-8')
+                    return content
+                except Exception as e:
+                    print(f"  - Error reading CSV cache: {e}")
+                    return None
+        
+        return None
+    
+    def save_csv_cache(self, division: Dict[str, Any], csv_content: str) -> None:
+        """
+        Save CSV content to cache.
+        
+        Parameters
+        ----------
+        division : Dict[str, Any]
+            Division dictionary
+        csv_content : str
+            CSV content to cache
+        """
+        if not self.use_cache:
+            return
+        
+        _, _, csv_path = self.get_cache_path(division)
+        
+        with self.cache_lock:
+            try:
+                csv_path.write_text(csv_content, encoding='utf-8')
+            except Exception as e:
+                print(f"  - Error saving CSV cache: {e}")
     
     def get_seasons(self) -> List[Dict[str, str]]:
         """
@@ -538,9 +594,11 @@ class GVSAScraper:
         """
         display_name = division.get('display_name', division.get('division_name', 'unknown'))
         
-        # Check if already cached
-        if self.get_cached_html(division):
-            print(f"[{div_idx}/{total}] ⊘ {display_name}: Already cached")
+        # Check if already cached (both HTML and CSV)
+        html_cached = self.get_cached_html(division)
+        csv_cached = self.get_cached_csv(division)
+        if html_cached and csv_cached:
+            print(f"[{div_idx}/{total}] ⊘ {display_name}: Already cached (HTML + CSV)")
             return False
         
         # Fetch from web
@@ -571,7 +629,24 @@ class GVSAScraper:
             # Save to cache
             self.save_html_cache(division, html_content)
             
-            print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached")
+            # Extract CSV link from HTML and download/cache CSV
+            csv_link = parse_csv_link(html_content)
+            if csv_link:
+                try:
+                    # Download CSV using the extracted link
+                    csv_response = session.get(csv_link, timeout=30)
+                    csv_response.raise_for_status()
+                    csv_content = csv_response.text
+                    
+                    # Save CSV to cache
+                    self.save_csv_cache(division, csv_content)
+                    print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML + CSV)")
+                except Exception as e:
+                    # CSV download failed, but HTML is cached
+                    print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched HTML (CSV download failed: {e})")
+            else:
+                print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML, no CSV link found)")
+            
             time.sleep(self.delay)  # Be polite to the server
             return True
         except requests.RequestException as e:
