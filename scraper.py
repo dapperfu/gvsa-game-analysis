@@ -530,17 +530,18 @@ class GVSAScraper:
             
             total_divisions += len(divisions)
             
-            # Check how many are already cached
-            cached_count = sum(1 for div in divisions if self.get_cached_html(div))
+            # Check how many are already cached (both HTML and CSV)
+            cached_count = sum(1 for div in divisions 
+                             if self.get_cached_html(div) and self.get_cached_csv(div))
             total_cached += cached_count
             
             if cached_count == len(divisions):
-                print(f"\n✓ All {len(divisions)} divisions already cached, skipping...")
+                print(f"\n✓ All {len(divisions)} divisions already cached (HTML + CSV), skipping...")
                 continue
             
-            # Fetch HTML in parallel (but don't parse)
+            # Fetch HTML and CSV in parallel (but don't parse)
             remaining = len(divisions) - cached_count
-            print(f"\nFetching HTML for {remaining} divisions ({(len(divisions) - cached_count)} new, {cached_count} already cached) with {self.max_workers} workers...")
+            print(f"\nFetching HTML + CSV for {remaining} divisions ({(len(divisions) - cached_count)} new, {cached_count} already cached) with {self.max_workers} workers...")
             
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 # Submit all tasks
