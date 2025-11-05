@@ -149,8 +149,8 @@ def track_team_progression(team: Optional[Team] = None,
             
             progression_map[age_group].append({
                 'season': division.season.season_name,
-                'year_season': division.season.year_season,
-                'season_type': division.season.season_type.value,
+                'year': division.season.year,
+                'season_type': division.season.season_type,
                 'division_name': division.division_name,
                 'division_id': division.id,
                 'team_name': team_season.team_name,
@@ -173,7 +173,7 @@ def track_team_progression(team: Optional[Team] = None,
         for age_group in sorted_ages:
             # Sort appearances within each age group by season
             appearances = sorted(progression_map[age_group], 
-                              key=lambda x: (x['year_season'], x['season_type']))
+                              key=lambda x: (x['year'], x['season_type']))
             progression_data.append({
                 'age_group': get_age_group_label(age_group),
                 'age_min': age_group[0],
@@ -337,7 +337,7 @@ def build_team_record_across_seasons(birth_year: int, gender: str, club_name: st
     # Note: season_type is now an enum, but comparison still works
     team_seasons.sort(key=lambda ts: (
         ts.division.season.year,
-        ts.division.season.season_type.value
+        ts.division.season.season_type
     ))
     
     # Group by season and build record
@@ -348,22 +348,22 @@ def build_team_record_across_seasons(birth_year: int, gender: str, club_name: st
         season = division.season
         
         # Create season key
-        season_key = f"{season.year_season}_{season.season_type}"
+        season_key = f"{season.year}_{season.season_type}"
         
         if season_key not in season_records:
             # Calculate expected age group for this season
             season_year = extract_season_year(season)
             expected_age_group = None
             if season_year:
-                season_type_str = season.season_type.value
+                season_type_str = season.season_type
                 age_group_tuple = calculate_age_group(birth_year, season_year, season_type_str)
                 if age_group_tuple:
                     expected_age_group = get_age_group_label(age_group_tuple)
             
             season_records[season_key] = {
                 'season_name': season.season_name,
-                'year_season': season.year_season,
-                'season_type': season.season_type.value,
+                'year': season.year,
+                'season_type': season.season_type,
                 'expected_age_group': expected_age_group,
                 'actual_divisions': [],
                 'stats': {
@@ -406,7 +406,7 @@ def build_team_record_across_seasons(birth_year: int, gender: str, club_name: st
     # Convert to sorted list
     seasons_list = sorted(
         season_records.values(),
-        key=lambda x: (x['year_season'], x['season_type'])
+        key=lambda x: (x['year'], x['season_type'])
     )
     
     return {
@@ -451,7 +451,7 @@ def find_team_lineage(team: Team) -> List[TeamSeason]:
     # Note: season_type is now an enum, but comparison still works
     team_seasons.sort(key=lambda ts: (
         ts.division.season.year,
-        ts.division.season.season_type.value,
+        ts.division.season.season_type,
         ts.division.division_name
     ))
     

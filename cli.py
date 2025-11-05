@@ -178,11 +178,11 @@ def seasons(ctx: click.Context, output_format: str, year: Optional[int],
         
         if season_type:
             season_type_norm = season_type.capitalize()
-            season_type_enum = SeasonType.Fall if season_type_norm == 'Fall' else SeasonType.Spring
+            season_type_str = 'Fall' if season_type_norm == 'Fall' else 'Spring'
             if year:
-                query = select(s for s in Season if s.year == year and s._season_type == season_type_enum.value)
+                query = select(s for s in Season if s.year == year and s.season_type == season_type_str)
             else:
-                query = select(s for s in Season if s._season_type == season_type_enum.value)
+                query = select(s for s in Season if s.season_type == season_type_str)
         
         seasons_list = list(query)
         result = []
@@ -194,7 +194,7 @@ def seasons(ctx: click.Context, output_format: str, year: Optional[int],
             result.append({
                 'season_name': season.season_name,
                 'year': season.year,
-                'season_type': season.season_type.value,
+                'season_type': season.season_type,
                 'division_count': div_count,
                 'scraped_at': str(season.scraped_at)
             })
@@ -247,8 +247,8 @@ def divisions(ctx: click.Context, year: Optional[int], season: Optional[str],
         # Filter by year and season
         if year and season:
             season_type_norm = season.capitalize()
-            season_type_enum = SeasonType.Fall if season_type_norm == 'Fall' else SeasonType.Spring
-            season_obj = db_instance.get_season(year, season_type_enum.value)
+            season_type_str = 'Fall' if season_type_norm == 'Fall' else 'Spring'
+            season_obj = db_instance.get_season(year, season_type_str)
             if season_obj:
                 query = select(d for d in Division if d.season == season_obj)
             else:
@@ -261,8 +261,8 @@ def divisions(ctx: click.Context, year: Optional[int], season: Optional[str],
                 return []
         elif season:
             season_type_norm = season.capitalize()
-            season_type_enum = SeasonType.Fall if season_type_norm == 'Fall' else SeasonType.Spring
-            query = select(d for d in Division if d.season._season_type == season_type_enum.value)
+            season_type_str = 'Fall' if season_type_norm == 'Fall' else 'Spring'
+            query = select(d for d in Division if d.season.season_type == season_type_str)
         
         # Filter by age group
         if age_group:
@@ -288,7 +288,7 @@ def divisions(ctx: click.Context, year: Optional[int], season: Optional[str],
                 'division_name': division.division_name,
                 'season': division.season.season_name,
                 'year': division.season.year,
-                'season_type': division.season.season_type.value,
+                'season_type': division.season.season_type,
                 'age_group': age_group_extracted or 'Unknown',
                 'team_count': team_count,
                 'matches_count': match_count,
@@ -448,7 +448,7 @@ def teams(ctx: click.Context, search: Optional[str], club: Optional[str],
                 'division': ts.division.division_name,
                 'season': ts.division.season.season_name,
                 'year': ts.division.season.year,
-                'season_type': ts.division.season.season_type.value,
+                'season_type': ts.division.season.season_type,
             }
             
             if stats:

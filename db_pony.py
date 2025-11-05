@@ -274,30 +274,28 @@ class GVSA_Database:
         Season
             Season entity
         """
-        # Normalize season_type to SeasonType enum
+        # Normalize season_type
         if season_type == 'F' or season_type == 'Fall':
-            season_type_enum = SeasonType.Fall
+            season_type_str = 'Fall'
         elif season_type == 'S' or season_type == 'Spring':
-            season_type_enum = SeasonType.Spring
+            season_type_str = 'Spring'
         else:
             raise ValueError(f"Invalid season_type: {season_type}. Must be 'Fall' or 'Spring'")
         
-        # Use select() instead of get() to handle multiple matches
-        # Compare against string value since DB stores as string
-        seasons = list(select(
-            s for s in Season
-            if s.year == year
-            and s._season_type == season_type_enum.value
-        ))
+        # Try to get existing season (composite_key ensures uniqueness)
+        season = Season.get(year=year, season_type=season_type_str)
         
-        if seasons:
-            # If multiple seasons exist, return the first one (most recent)
-            season = seasons[0]
+        if season:
+            # Update season_name if it's different (shouldn't happen, but handle it)
+            if season.season_name != season_name:
+                season.season_name = season_name
+                commit()
         else:
+            # Create new season
             season = Season(
                 year=year,
-                season_name=season_name,
-                _season_type=season_type_enum.value  # Set internal field directly
+                season_type=season_type_str,
+                season_name=season_name
             )
             commit()
         
@@ -322,22 +320,16 @@ class GVSA_Database:
         Optional[Season]
             Season entity or None if not found
         """
-        # Normalize season_type to SeasonType enum
+        # Normalize season_type
         if season_type == 'F' or season_type == 'Fall':
-            season_type_enum = SeasonType.Fall
+            season_type_str = 'Fall'
         elif season_type == 'S' or season_type == 'Spring':
-            season_type_enum = SeasonType.Spring
+            season_type_str = 'Spring'
         else:
             raise ValueError(f"Invalid season_type: {season_type}. Must be 'Fall' or 'Spring'")
         
-        # Compare against string value since DB stores as string
-        seasons = list(select(
-            s for s in Season
-            if s.year == year
-            and s._season_type == season_type_enum.value
-        ))
-        
-        return seasons[0] if seasons else None
+        # Use composite_key to get season directly
+        return Season.get(year=year, season_type=season_type_str)
     
     @db_session
     def get_or_create_division(self, division_id: str, division_name: str,

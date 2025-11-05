@@ -137,7 +137,7 @@ def find_expected_divisions(birth_year: int, gender: str, season: Season) -> Lis
     if not season_year:
         return []
     
-    season_type_str = season.season_type.value
+    season_type_str = season.season_type
     age_group = calculate_age_group(birth_year, season_year, season_type_str)
     if not age_group:
         return []

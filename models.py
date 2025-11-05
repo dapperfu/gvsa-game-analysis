@@ -5,7 +5,7 @@ PonyORM database models for GVSA soccer data.
 This module defines the database schema using PonyORM to track teams,
 divisions, matches, clubs, and team progression across seasons.
 """
-from pony.orm import Database, Required, Optional, Set, PrimaryKey
+from pony.orm import Database, Required, Optional, Set, PrimaryKey, composite_key
 from datetime import datetime
 from enum import Enum
 
@@ -24,14 +24,18 @@ class Season(db.Entity):
     """
     Represents a soccer season (e.g., "Fall 2025", "Spring 2026").
     
+    The combination of year and season_type must be unique.
+    
     Attributes
     ----------
+    id : int
+        Primary key (auto-increment)
     year : int
         Year (e.g., 2025)
-    season_name : str
-        Season name (e.g., "Fall 2025")
     season_type : str
-        Season type: "Fall" or "Spring" (stored as string, use SeasonType enum for validation)
+        Season type: "Fall" or "Spring"
+    season_name : str
+        Season name (e.g., "Fall 2025") - computed from year and season_type
     divisions : Set[Division]
         Divisions in this season
     scraped_at : datetime
@@ -39,37 +43,21 @@ class Season(db.Entity):
     """
     id = PrimaryKey(int, auto=True)
     year = Required(int)
-    season_name = Required(str)
-    _season_type = Required(str, column='season_type')  # Store as string in DB
+    season_type = Required(str)  # "Fall" or "Spring"
+    season_name = Required(str)  # "Fall 2025", "Spring 2026", etc.
     divisions = Set('Division')
     scraped_at = Required(datetime, default=datetime.now)
     
-    @property
-    def season_type(self) -> SeasonType:
-        """Get season_type as enum."""
-        return SeasonType(self._season_type)
+    # Composite unique constraint: (year, season_type) must be unique
+    composite_key(year, season_type)
     
-    @season_type.setter
-    def season_type(self, value: SeasonType | str) -> None:
-        """Set season_type, accepting enum or string."""
-        if isinstance(value, SeasonType):
-            self._season_type = value.value
-        elif isinstance(value, str):
-            # Validate string value
-            if value not in ('Fall', 'Spring', 'F', 'S'):
-                raise ValueError(f"Invalid season_type: {value}")
-            # Normalize to full name
-            if value == 'F':
-                self._season_type = 'Fall'
-            elif value == 'S':
-                self._season_type = 'Spring'
-            else:
-                self._season_type = value
-        else:
-            raise TypeError(f"season_type must be SeasonType or str, got {type(value)}")
+    @property
+    def season_type_enum(self) -> SeasonType:
+        """Get season_type as enum."""
+        return SeasonType(self.season_type)
     
     def __str__(self) -> str:
-        return f"{self.season_name}"
+        return self.season_name
 
 
 class Division(db.Entity):
