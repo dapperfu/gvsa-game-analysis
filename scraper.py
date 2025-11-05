@@ -11,6 +11,8 @@ import requests
 import time
 import re
 import json
+import sys
+import traceback
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
@@ -515,8 +517,11 @@ class GVSAScraper:
             print(f"\nFetching HTML + CSV for {remaining} divisions ({(len(divisions) - cached_count)} new, {cached_count} already cached) with {self.max_workers} workers...")
             
             completed_count = 0
+            print(f"DEBUG: Submitting {len(divisions)} tasks to ThreadPoolExecutor with {self.max_workers} workers", file=sys.stderr)
+            
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 # Submit all tasks
+                print(f"DEBUG: Creating futures for all divisions", file=sys.stderr)
                 futures = {
                     executor.submit(
                         self._fetch_html_only,
@@ -526,9 +531,11 @@ class GVSAScraper:
                     ): (div_idx, division)
                     for div_idx, division in enumerate(divisions)
                 }
+                print(f"DEBUG: All {len(futures)} futures submitted, waiting for completion...", file=sys.stderr)
                 
                 # Collect results as they complete
                 for future in as_completed(futures):
+                    print(f"DEBUG: Got completed future", file=sys.stderr)
                     div_idx, division = futures[future]
                     completed_count += 1
                     try:
@@ -538,10 +545,13 @@ class GVSAScraper:
                     except Exception as e:
                         display_name = division.get('display_name', division.get('division_name', 'unknown'))
                         print(f"[{div_idx}/{len(divisions)}] ✗ {display_name}: Error - {e}")
+                        print(f"DEBUG: Exception in future.result(): {traceback.format_exc()}", file=sys.stderr)
                     
                     # Periodic progress update (every 25 divisions or at completion)
                     if completed_count % 25 == 0 or completed_count == len(divisions):
                         print(f"Progress: {completed_count}/{len(divisions)} divisions processed")
+                
+                print(f"DEBUG: All futures completed, exiting ThreadPoolExecutor context", file=sys.stderr)
         
         print(f"\n{'='*80}")
         print("HTML Fetching Summary:")
@@ -571,81 +581,108 @@ class GVSAScraper:
             True if HTML was fetched/saved, False otherwise
         """
         display_name = division.get('display_name', division.get('division_name', 'unknown'))
-        
-        # Check if already cached (both HTML and CSV)
-        html_cached = self.get_cached_html(division)
-        csv_cached = self.get_cached_csv(division)
-        if html_cached and csv_cached:
-            print(f"[{div_idx}/{total}] ⊘ {display_name}: Already cached (HTML + CSV)")
-            return False
-        
-        # Fetch from web
-        url = f"{self.BASE_URL}/standings.jsp"
-        # Build division parameter with exact spacing/padding as seen in mitm logs
-        # Format: "      2843,2025/2026 ,      2775,      2846,Fall 2025                     ,U17/18/19 Girls Elite         ,F"
-        # IDs: 10 chars (7 spaces + 3-4 digits), Names: 30 chars, Year: 10 chars (with trailing space)
-        division_param = (
-            f"{str(division['division_id']):>10},"
-            f"{division['year_season']} ,"
-            f"{str(division['season_id1']):>10},"
-            f"{str(division['season_id2']):>10},"
-            f"{division['season_name']:<30},"
-            f"{division['division_name']:<30},"
-            f"{division['season_type']}"
-        )
-        
-        # Create a new session for thread safety
-        session = requests.Session()
-        session.headers.update(self.session.headers)
+        print(f"DEBUG: _fetch_html_only START [{div_idx}/{total}] {display_name}", file=sys.stderr)
         
         try:
-            # Use single timeout value (revert to original working value)
-            response = session.post(url, data={'division': division_param}, timeout=30)
-            response.raise_for_status()
-            response.encoding = 'ISO-8859-1'
-            html_content = response.text
+            # Check if already cached (both HTML and CSV)
+            print(f"DEBUG: Checking cache for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+            html_cached = self.get_cached_html(division)
+            csv_cached = self.get_cached_csv(division)
+            if html_cached and csv_cached:
+                print(f"[{div_idx}/{total}] ⊘ {display_name}: Already cached (HTML + CSV)")
+                print(f"DEBUG: _fetch_html_only END (cached) [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                return False
             
-            # Save to cache
-            self.save_html_cache(division, html_content)
+            # Fetch from web
+            url = f"{self.BASE_URL}/standings.jsp"
+            # Build division parameter with exact spacing/padding as seen in mitm logs
+            # Format: "      2843,2025/2026 ,      2775,      2846,Fall 2025                     ,U17/18/19 Girls Elite         ,F"
+            # IDs: 10 chars (7 spaces + 3-4 digits), Names: 30 chars, Year: 10 chars (with trailing space)
+            division_param = (
+                f"{str(division['division_id']):>10},"
+                f"{division['year_season']} ,"
+                f"{str(division['season_id1']):>10},"
+                f"{str(division['season_id2']):>10},"
+                f"{division['season_name']:<30},"
+                f"{division['division_name']:<30},"
+                f"{division['season_type']}"
+            )
             
-            # Extract CSV link from HTML and download/cache CSV (optional, non-blocking)
-            # Use shorter timeout for CSV to avoid blocking if server is slow
-            csv_link = None
+            print(f"DEBUG: Creating session for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+            # Create a new session for thread safety
+            session = requests.Session()
+            session.headers.update(self.session.headers)
+            
+            print(f"DEBUG: POST request starting for [{div_idx}/{total}] {display_name}", file=sys.stderr)
             try:
-                csv_link = parse_csv_link(html_content)
-            except Exception as e:
-                # BeautifulSoup parsing failed - skip CSV for this division
-                pass
-            
-            if csv_link:
+                # Use single timeout value (revert to original working value)
+                response = session.post(url, data={'division': division_param}, timeout=30)
+                print(f"DEBUG: POST request completed for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                response.raise_for_status()
+                response.encoding = 'ISO-8859-1'
+                html_content = response.text
+                
+                print(f"DEBUG: Saving HTML cache for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                # Save to cache
+                self.save_html_cache(division, html_content)
+                print(f"DEBUG: HTML cache saved for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                
+                # Extract CSV link from HTML and download/cache CSV (optional, non-blocking)
+                # Use shorter timeout for CSV to avoid blocking if server is slow
+                print(f"DEBUG: Parsing CSV link for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                csv_link = None
                 try:
-                    # Download CSV with shorter timeout (10s) to avoid blocking
-                    csv_response = session.get(csv_link, timeout=10)
-                    csv_response.raise_for_status()
-                    csv_content = csv_response.text
-                    
-                    # Save CSV to cache
-                    self.save_csv_cache(division, csv_content)
-                    print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML + CSV)")
-                except Exception:
-                    # CSV download failed or timed out - continue with HTML only
-                    print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML only, CSV skipped)")
-            else:
-                print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML, no CSV link)")
-            
-            time.sleep(self.delay)  # Be polite to the server
-            return True
-        except requests.Timeout as e:
-            print(f"[{div_idx}/{total}] ✗ {display_name}: Request timeout - {e}")
-            return False
-        except requests.RequestException as e:
-            print(f"[{div_idx}/{total}] ✗ {display_name}: Failed to fetch - {e}")
-            return False
+                    csv_link = parse_csv_link(html_content)
+                    print(f"DEBUG: CSV link parsed: {csv_link is not None} for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                except Exception as e:
+                    # BeautifulSoup parsing failed - skip CSV for this division
+                    print(f"DEBUG: CSV link parsing failed for [{div_idx}/{total}] {display_name}: {e}", file=sys.stderr)
+                    pass
+                
+                if csv_link:
+                    print(f"DEBUG: Downloading CSV for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                    try:
+                        # Download CSV with shorter timeout (10s) to avoid blocking
+                        csv_response = session.get(csv_link, timeout=10)
+                        print(f"DEBUG: CSV download completed for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                        csv_response.raise_for_status()
+                        csv_content = csv_response.text
+                        
+                        print(f"DEBUG: Saving CSV cache for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                        # Save CSV to cache
+                        self.save_csv_cache(division, csv_content)
+                        print(f"DEBUG: CSV cache saved for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                        print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML + CSV)")
+                    except Exception as e:
+                        # CSV download failed or timed out - continue with HTML only
+                        print(f"DEBUG: CSV download failed for [{div_idx}/{total}] {display_name}: {e}", file=sys.stderr)
+                        print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML only, CSV skipped)")
+                else:
+                    print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML, no CSV link)")
+                
+                print(f"DEBUG: Sleeping {self.delay}s for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                time.sleep(self.delay)  # Be polite to the server
+                print(f"DEBUG: _fetch_html_only END (success) [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                return True
+            except requests.Timeout as e:
+                print(f"[{div_idx}/{total}] ✗ {display_name}: Request timeout - {e}")
+                print(f"DEBUG: _fetch_html_only END (timeout) [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                return False
+            except requests.RequestException as e:
+                print(f"[{div_idx}/{total}] ✗ {display_name}: Failed to fetch - {e}")
+                print(f"DEBUG: _fetch_html_only END (RequestException) [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                return False
+            except Exception as e:
+                print(f"[{div_idx}/{total}] ✗ {display_name}: Unexpected error - {e}")
+                print(f"DEBUG: _fetch_html_only END (Exception) [{div_idx}/{total}] {display_name}: {traceback.format_exc()}", file=sys.stderr)
+                return False
+            finally:
+                print(f"DEBUG: Closing session for [{div_idx}/{total}] {display_name}", file=sys.stderr)
+                session.close()
+                print(f"DEBUG: Session closed for [{div_idx}/{total}] {display_name}", file=sys.stderr)
         except Exception as e:
-            print(f"[{div_idx}/{total}] ✗ {display_name}: Unexpected error - {e}")
-            return False
-        finally:
-            session.close()
+            print(f"DEBUG: Outer exception in _fetch_html_only [{div_idx}/{total}] {display_name}: {traceback.format_exc()}", file=sys.stderr)
+            raise
     
     def parse_cached_html(self, db: Optional[GVSA_Database] = None) -> List[Dict[str, Any]]:
         """
