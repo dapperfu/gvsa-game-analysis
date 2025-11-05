@@ -586,72 +586,30 @@ def db() -> None:
 
 @db.command('import')
 @click.option('--workers', default=5, type=int,
-              help='Number of parallel workers (default: 5)')
+              help='Number of parallel workers for HTML parsing (default: 5)')
+@click.option('--cache-dir', type=click.Path(exists=True, file_okay=False, dir_okay=True),
+              default='html_cache', help='Cache directory path (default: html_cache)')
+@click.option('--skip-csv', is_flag=True,
+              help='Skip CSV import, only import HTML data')
+@click.option('--skip-html', is_flag=True,
+              help='Skip HTML import, only import CSV data')
 @click.pass_context
-def db_import(ctx: click.Context, workers: int) -> None:
+def db_import(ctx: click.Context, workers: int, cache_dir: str, 
+              skip_csv: bool, skip_html: bool) -> None:
     """
-    Import cached HTML files into the database.
+    Import cached HTML and CSV files into the database.
     
-    Parses cached HTML files from the cache directory and populates the database.
-    Run 'gvsa scrape' first to fetch data from the website.
+    Unified import command that imports both HTML data (teams, standings) and
+    CSV match data from the cache directory. Run 'gvsa scrape' first to fetch data.
     
     Examples:
     
         gvsa db import
     
         gvsa db import --workers 10
-    """
-    db_path = ctx.obj['db_path']
-    verbose = ctx.obj['verbose']
     
-    if verbose:
-        click.echo(f"Using database: {db_path}")
-        click.echo(f"Workers: {workers}")
-    
-    # Initialize scraper
-    scraper = GVSAScraper(
-        delay=0,  # No delay needed for cached files
-        use_cache=True,
-        max_workers=workers
-    )
-    
-    # Initialize database
-    db_instance = GVSA_Database(db_path)
-    
-    # Parse cached HTML and populate database
-    click.echo("=" * 80)
-    click.echo("Parsing cached HTML files and populating database")
-    click.echo("=" * 80)
-    standings = scraper.parse_cached_html(db=db_instance)
-    
-    # Summary
-    click.echo(f"\n{'='*80}")
-    click.echo("Import complete!")
-    click.echo(f"Successfully parsed: {len(standings)} divisions")
-    
-    total_teams = sum(len(s['teams']) for s in standings)
-    total_matches = sum(len(s['matches']) for s in standings)
-    click.echo(f"Total teams: {total_teams}")
-    click.echo(f"Total matches: {total_matches}")
-    click.echo(f"Database saved to: {db_path}")
-
-
-@db.command('import-csv')
-@click.option('--cache-dir', type=click.Path(exists=True, file_okay=False, dir_okay=True),
-              default='html_cache', help='Cache directory path (default: html_cache)')
-@click.pass_context
-def db_import_csv(ctx: click.Context, cache_dir: str) -> None:
-    """
-    Import matches from cached CSV files into the database.
-    
-    Scans CSV files in the cache directory and imports match data.
-    This is useful for importing match results that may be more complete in CSV format.
-    
-    Examples:
-    
-        gvsa db import-csv
-    
-        gvsa db import-csv --cache-dir /path/to/cache
+        gvsa db import --skip-csv    # Only import HTML
+        gvsa db import --skip-html   # Only import CSV
     """
     from .import_csv import import_csv_matches, find_csv_files
     
@@ -660,71 +618,115 @@ def db_import_csv(ctx: click.Context, cache_dir: str) -> None:
     
     if verbose:
         click.echo(f"Using database: {db_path}")
+        click.echo(f"Workers: {workers}")
         click.echo(f"Cache directory: {cache_dir}")
     
     # Initialize database
     db_instance = GVSA_Database(db_path)
     
-    # Find all CSV files
-    cache_path = Path(cache_dir)
-    csv_files = find_csv_files(cache_path)
+    total_teams = 0
+    total_matches_html = 0
+    total_matches_csv = 0
+    total_csv_files = 0
+    csv_errors = []
     
-    if not csv_files:
-        click.echo(f"No CSV files found in {cache_dir}")
-        return
-    
-    click.echo("=" * 80)
-    click.echo("Importing CSV Matches into Database")
-    click.echo("=" * 80)
-    click.echo(f"Database: {db_path}")
-    click.echo(f"Found {len(csv_files)} CSV files\n")
-    
-    total_stats = {
-        'matches_found': 0,
-        'matches_imported': 0,
-        'teams_created': 0,
-        'errors': []
-    }
-    
-    try:
-        for i, csv_file in enumerate(csv_files, 1):
-            if verbose:
-                click.echo(f"[{i}/{len(csv_files)}] Processing {csv_file.relative_to(cache_path)}...")
-            
-            stats = import_csv_matches(csv_file, db_instance, verbose=verbose)
-            
-            total_stats['matches_found'] += stats['matches_found']
-            total_stats['matches_imported'] += stats['matches_imported']
-            total_stats['teams_created'] += stats['teams_created']
-            total_stats['errors'].extend(stats['errors'])
-            
-            if not verbose:
-                if stats['matches_imported'] > 0:
-                    click.echo(f"[{i}/{len(csv_files)}] ✓ {csv_file.name}: {stats['matches_imported']}/{stats['matches_found']} matches")
-                elif stats['errors']:
-                    click.echo(f"[{i}/{len(csv_files)}] ✗ {csv_file.name}: {stats['errors'][-1]}")
-        
-        click.echo(f"\n{'='*80}")
-        click.echo("Summary:")
-        click.echo(f"  CSV files processed: {len(csv_files)}")
-        click.echo(f"  Matches found: {total_stats['matches_found']}")
-        click.echo(f"  Matches imported: {total_stats['matches_imported']}")
-        click.echo(f"  Teams created: {total_stats['teams_created']}")
-        if total_stats['errors']:
-            click.echo(f"  Errors: {len(total_stats['errors'])}")
-            if verbose:
-                for error in total_stats['errors'][:10]:  # Show first 10 errors
-                    click.echo(f"    - {error}")
+    # Stage 1: Import HTML data
+    if not skip_html:
+        click.echo("=" * 80)
+        click.echo("STAGE 1: Importing HTML data (teams and standings)")
         click.echo("=" * 80)
         
-    except KeyboardInterrupt:
-        click.echo("\n\nInterrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        click.echo(f"\n\nError: {e}", err=True)
-        if verbose:
-            traceback.print_exc()
-        sys.exit(1)
+        # Initialize scraper
+        scraper = GVSAScraper(
+            delay=0,  # No delay needed for cached files
+            use_cache=True,
+            max_workers=workers
+        )
+        
+        # Parse cached HTML and populate database
+        standings = scraper.parse_cached_html(db=db_instance)
+        
+        total_teams = sum(len(s['teams']) for s in standings)
+        total_matches_html = sum(len(s['matches']) for s in standings)
+        
+        click.echo(f"\nHTML Import Summary:")
+        click.echo(f"  Divisions parsed: {len(standings)}")
+        click.echo(f"  Teams: {total_teams}")
+        click.echo(f"  Matches: {total_matches_html}")
+    
+    # Stage 2: Import CSV match data
+    if not skip_csv:
+        click.echo(f"\n{'='*80}")
+        click.echo("STAGE 2: Importing CSV match data")
+        click.echo("=" * 80)
+        
+        # Find all CSV files
+        cache_path = Path(cache_dir)
+        csv_files = find_csv_files(cache_path)
+        
+        if csv_files:
+            click.echo(f"Found {len(csv_files)} CSV files\n")
+            
+            csv_stats = {
+                'matches_found': 0,
+                'matches_imported': 0,
+                'teams_created': 0,
+                'errors': []
+            }
+            
+            try:
+                for i, csv_file in enumerate(csv_files, 1):
+                    if verbose:
+                        click.echo(f"[{i}/{len(csv_files)}] Processing {csv_file.relative_to(cache_path)}...")
+                    
+                    stats = import_csv_matches(csv_file, db_instance, verbose=verbose)
+                    
+                    csv_stats['matches_found'] += stats['matches_found']
+                    csv_stats['matches_imported'] += stats['matches_imported']
+                    csv_stats['teams_created'] += stats['teams_created']
+                    csv_stats['errors'].extend(stats['errors'])
+                    
+                    if not verbose:
+                        if stats['matches_imported'] > 0:
+                            click.echo(f"[{i}/{len(csv_files)}] ✓ {csv_file.name}: {stats['matches_imported']}/{stats['matches_found']} matches")
+                        elif stats['errors']:
+                            click.echo(f"[{i}/{len(csv_files)}] ✗ {csv_file.name}: {stats['errors'][-1]}")
+                
+                total_csv_files = len(csv_files)
+                total_matches_csv = csv_stats['matches_imported']
+                csv_errors = csv_stats['errors']
+                
+                click.echo(f"\nCSV Import Summary:")
+                click.echo(f"  CSV files processed: {total_csv_files}")
+                click.echo(f"  Matches found: {csv_stats['matches_found']}")
+                click.echo(f"  Matches imported: {total_matches_csv}")
+                click.echo(f"  Teams created: {csv_stats['teams_created']}")
+                if csv_errors:
+                    click.echo(f"  Errors: {len(csv_errors)}")
+                    if verbose:
+                        for error in csv_errors[:10]:  # Show first 10 errors
+                            click.echo(f"    - {error}")
+            except KeyboardInterrupt:
+                click.echo("\n\nInterrupted by user")
+                sys.exit(1)
+            except Exception as e:
+                click.echo(f"\n\nError during CSV import: {e}", err=True)
+                if verbose:
+                    traceback.print_exc()
+                sys.exit(1)
+        else:
+            click.echo(f"No CSV files found in {cache_dir}")
+    
+    # Final summary
+    click.echo(f"\n{'='*80}")
+    click.echo("Import Complete!")
+    click.echo("=" * 80)
+    if not skip_html:
+        click.echo(f"HTML: {total_teams} teams, {total_matches_html} matches")
+    if not skip_csv:
+        click.echo(f"CSV: {total_csv_files} files, {total_matches_csv} matches imported")
+    click.echo(f"Total matches: {total_matches_html + total_matches_csv}")
+    click.echo(f"Database saved to: {db_path}")
 
 
 @cli.group()
