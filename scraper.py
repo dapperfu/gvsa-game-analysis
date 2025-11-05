@@ -720,6 +720,106 @@ class GVSAScraper:
         
         return all_standings
     
+    def _reconstruct_division_info_from_path(self, cache_file: Path) -> Dict[str, Any]:
+        """
+        Reconstruct division information from cache file path.
+        
+        Parameters
+        ----------
+        cache_file : Path
+            Path to cached HTML file
+            
+        Returns
+        -------
+        Dict[str, Any]
+            Division info dictionary (may not have division_id)
+        """
+        # New structure: html_cache/{year}_{season_type}/{division_name}.html
+        parts = cache_file.parts
+        if len(parts) >= 2:
+            cache_dir_name = parts[-2]  # e.g., "2025_Fall"
+            # Parse year and season type from directory name
+            if '_' in cache_dir_name:
+                year_str, season_type_str = cache_dir_name.rsplit('_', 1)
+                # Normalize season_type to "Fall" or "Spring"
+                season_type = season_type_str  # Already normalized in cache path
+                season_name = f"{season_type_str} {year_str}"
+                return {
+                    'division_id': '',  # Will be looked up
+                    'year': year_str,
+                    'season_name': season_name,
+                    'division_name': cache_file.stem.replace('_', ' '),
+                    'season_type': season_type
+                }
+            else:
+                # Fallback for old format
+                return {
+                    'division_id': '',  # Will be looked up
+                    'year': cache_dir_name,
+                    'season_name': cache_dir_name,
+                    'division_name': cache_file.stem.replace('_', ' '),
+                    'season_type': 'Fall'
+                }
+        # Ultimate fallback
+        return {
+            'division_id': '',
+            'year': 'unknown',
+            'season_name': 'Unknown',
+            'division_name': cache_file.stem.replace('_', ' '),
+            'season_type': 'Fall'
+        }
+    
+    def _lookup_division_id(self, division_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Look up division_id from dropdown by matching division_name and season.
+        
+        Parameters
+        ----------
+        division_info : Dict[str, Any]
+            Division info dictionary (may not have division_id)
+            
+        Returns
+        -------
+        Dict[str, Any]
+            Updated division info with division_id if found
+        """
+        division_name = division_info.get('division_name', '').strip()
+        season_name = division_info.get('season_name', '').strip()
+        
+        if not division_name or not season_name:
+            return division_info
+        
+        try:
+            # Get all seasons to find the right one
+            seasons_list = self.get_seasons()
+            target_season = None
+            for s in seasons_list:
+                if s.get('season_name', '').strip() == season_name:
+                    target_season = s
+                    break
+            
+            if target_season:
+                divisions_list = self.get_divisions(target_season)
+                # Find matching division by name (should be exact match)
+                division_name_norm = ' '.join(division_name.split())
+                for div in divisions_list:
+                    div_name = div.get('division_name', '').strip()
+                    div_name_norm = ' '.join(div_name.split())
+                    
+                    if div_name_norm == division_name_norm:
+                        division_id = div.get('division_id', '').strip()
+                        if division_id:
+                            division_info['division_id'] = division_id
+                            division_info['season_id1'] = div.get('season_id1', '')
+                            division_info['season_id2'] = div.get('season_id2', '')
+                            division_info['year_season'] = div.get('year_season', '')
+                            break
+        except Exception:
+            # If lookup fails, return as-is (will raise error later)
+            pass
+        
+        return division_info
+    
     def _parse_cached_file(self, cache_file: Path, idx: int, total: int, db: Optional[GVSA_Database] = None) -> Optional[Dict[str, Any]]:
         """
         Parse a single cached HTML file.
