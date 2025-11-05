@@ -260,6 +260,8 @@ class GVSA_Database:
         """
         Get or create a season.
         
+        Handles race conditions by catching IntegrityError and retrying.
+        
         Parameters
         ----------
         year : int
@@ -291,13 +293,27 @@ class GVSA_Database:
                 season.season_name = season_name
                 commit()
         else:
-            # Create new season
-            season = Season(
-                year=year,
-                season_type=season_type_str,
-                season_name=season_name
-            )
-            commit()
+            # Create new season - handle race condition
+            try:
+                season = Season(
+                    year=year,
+                    season_type=season_type_str,
+                    season_name=season_name
+                )
+                commit()
+            except Exception as e:
+                # If IntegrityError (race condition), try to get the season again
+                if 'UNIQUE constraint' in str(e) or 'IntegrityError' in str(type(e).__name__):
+                    # Another thread created it, so get it now
+                    season = Season.get(year=year, season_type=season_type_str)
+                    if not season:
+                        raise  # Re-raise if still not found (shouldn't happen)
+                    # Update season_name if needed
+                    if season.season_name != season_name:
+                        season.season_name = season_name
+                        commit()
+                else:
+                    raise
         
         return season
     
@@ -527,9 +543,14 @@ class GVSA_Database:
             season_type_str
         )
         
+        # Ensure division_id is present (Required field)
+        division_id = division_info.get('division_id', '')
+        if not division_id:
+            division_id = ''
+        
         # Get or create division
         division = self.get_or_create_division(
-            division_info.get('division_id', ''),
+            division_id,
             division_info.get('division_name', ''),
             season
         )

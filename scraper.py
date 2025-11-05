@@ -691,6 +691,9 @@ class GVSAScraper:
                     # Remove display_name if present (redundant with division_name)
                     if 'display_name' in division_info:
                         del division_info['display_name']
+                    # Ensure division_id is present (Required field)
+                    if 'division_id' not in division_info:
+                        division_info['division_id'] = ''
                 except Exception as e:
                     print(f"  - Warning: Could not read metadata for {cache_file.name}: {e}")
                     # Fall back to reconstructing from path
@@ -705,7 +708,7 @@ class GVSAScraper:
                             season_type = season_type_str  # Already normalized in cache path
                             season_name = f"{season_type_str} {year_str}"
                             division_info = {
-                                'division_id': '',
+                                'division_id': '',  # Required field, set to empty if not available
                                 'year': year_str,
                                 'season_name': season_name,
                                 'division_name': cache_file.stem.replace('_', ' '),
