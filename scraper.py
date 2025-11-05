@@ -213,37 +213,8 @@ class GVSAScraper:
                 # Save HTML
                 html_path.write_text(html_content, encoding='utf-8')
                 
-                # Save metadata (division info)
-                # Extract year from season_name (e.g., "Spring 2019" -> "2019")
-                season_name = division.get('season_name', '')
-                year = 'unknown'
-                if season_name:
-                    year_match = re.search(r'\b(20\d{2})\b', season_name)
-                    if year_match:
-                        year = year_match.group(1)
-                
-                # Normalize season_type: "F" -> "Fall", "S" -> "Spring"
-                season_type_code = division.get('season_type', 'F')
-                # Also check season_name to ensure correctness
-                if 'Spring' in season_name:
-                    season_type = 'Spring'
-                elif 'Fall' in season_name:
-                    season_type = 'Fall'
-                else:
-                    season_type = 'Fall' if season_type_code == 'F' else 'Spring'
-                
-                division_name = division.get('division_name', division.get('display_name', ''))
-                
-                metadata = {
-                    'division_id': division.get('division_id', ''),
-                    'year': year,
-                    'season_id1': division.get('season_id1', ''),
-                    'season_id2': division.get('season_id2', ''),
-                    'season_name': season_name,
-                    'division_name': division_name,
-                    'season_type': season_type
-                }
-                json_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+                # Save metadata (division info) - use helper method
+                self._save_metadata_json(json_path, division)
                 
                 # Note: CSV is cached separately by save_csv_cache()
             except Exception as e:
@@ -809,16 +780,58 @@ class GVSAScraper:
                     if div_name_norm == division_name_norm:
                         division_id = div.get('division_id', '').strip()
                         if division_id:
+                            # Update with full division info from dropdown
                             division_info['division_id'] = division_id
                             division_info['season_id1'] = div.get('season_id1', '')
                             division_info['season_id2'] = div.get('season_id2', '')
                             division_info['year_season'] = div.get('year_season', '')
-                            break
+                            # Update division_name to match dropdown (authoritative source)
+                            division_info['division_name'] = div.get('division_name', division_name)
+                            division_info['season_name'] = div.get('season_name', season_name)
+                            division_info['season_type'] = 'Fall' if div.get('season_type', 'F') == 'F' else 'Spring'
+                            return division_info
         except Exception:
             # If lookup fails, return as-is (will raise error later)
             pass
         
         return division_info
+    
+    def _save_metadata_json(self, metadata_path: Path, division_info: Dict[str, Any]) -> None:
+        """
+        Save metadata JSON file with division information.
+        
+        Parameters
+        ----------
+        metadata_path : Path
+            Path to metadata JSON file
+        division_info : Dict[str, Any]
+            Division info dictionary
+        """
+        # Extract year from season_name (e.g., "Spring 2019" -> "2019")
+        season_name = division_info.get('season_name', '')
+        year = 'unknown'
+        if season_name:
+            year_match = re.search(r'\b(20\d{2})\b', season_name)
+            if year_match:
+                year = year_match.group(1)
+        
+        # Normalize season_type
+        season_type = division_info.get('season_type', 'Fall')
+        if season_type in ('F', 'S'):
+            season_type = 'Fall' if season_type == 'F' else 'Spring'
+        
+        metadata = {
+            'division_id': division_info.get('division_id', ''),
+            'year': year,
+            'season_id1': division_info.get('season_id1', ''),
+            'season_id2': division_info.get('season_id2', ''),
+            'season_name': season_name,
+            'division_name': division_info.get('division_name', ''),
+            'season_type': season_type
+        }
+        
+        with self.cache_lock:
+            metadata_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
     
     def _parse_cached_file(self, cache_file: Path, idx: int, total: int, db: Optional[GVSA_Database] = None) -> Optional[Dict[str, Any]]:
         """
@@ -872,52 +885,15 @@ class GVSAScraper:
                     division_id = division_info.get('division_id', '').strip()
                     if not division_id:
                         # division_id is missing or empty - need to look it up from dropdown
-                        division_name = division_info.get('division_name', '').strip()
-                        season_name = division_info.get('season_name', '').strip()
+                        division_info = self._lookup_division_id(division_info)
                         
-                        if division_name and season_name:
-                            # Try to find division_id by matching division_name in dropdown
-                            # Extract year from season_name
-                            year_match = re.search(r'\b(20\d{2})\b', season_name)
-                            if year_match:
-                                year = year_match.group(1)
-                                season_type = division_info.get('season_type', 'Fall')
-                                
-                                # Re-fetch divisions for this season to get division_id
-                                # Match by division_name (should be 1:1)
-                                try:
-                                    # Get all seasons to find the right one
-                                    seasons_list = self.get_seasons()
-                                    target_season = None
-                                    for s in seasons_list:
-                                        if s.get('season_name', '').strip() == season_name:
-                                            target_season = s
-                                            break
-                                    
-                                    if target_season:
-                                        divisions_list = self.get_divisions(target_season)
-                                        # Find matching division by name (should be exact match)
-                                        for div in divisions_list:
-                                            div_name = div.get('division_name', '').strip()
-                                            # Normalize both names for comparison
-                                            div_name_norm = ' '.join(div_name.split())
-                                            division_name_norm = ' '.join(division_name.split())
-                                            
-                                            if div_name_norm == division_name_norm:
-                                                division_id = div.get('division_id', '').strip()
-                                                if division_id:
-                                                    division_info['division_id'] = division_id
-                                                    division_info['season_id1'] = div.get('season_id1', '')
-                                                    division_info['season_id2'] = div.get('season_id2', '')
-                                                    division_info['year_season'] = div.get('year_season', '')
-                                                    break
-                                except Exception as lookup_error:
-                                    # If lookup fails, we'll handle it below
-                                    pass
+                        # If found, save the updated metadata
+                        if division_info.get('division_id', '').strip():
+                            self._save_metadata_json(metadata_path, division_info)
                         
                         # If still no division_id, this is an error - we can't proceed
                         if not division_info.get('division_id', '').strip():
-                            raise ValueError(f"division_id is required but missing for {division_name}. "
+                            raise ValueError(f"division_id is required but missing for {division_info.get('division_name', 'unknown')}. "
                                           f"Could not look it up from dropdown.")
                 except Exception as e:
                     print(f"  - Warning: Could not read metadata for {cache_file.name}: {e}")
@@ -926,12 +902,20 @@ class GVSAScraper:
                     # Try to look up division_id from dropdown
                     if not division_info.get('division_id', '').strip():
                         division_info = self._lookup_division_id(division_info)
+                    
+                    # If found, save the metadata JSON file
+                    if division_info.get('division_id', '').strip():
+                        self._save_metadata_json(metadata_path, division_info)
             else:
                 # No metadata file - reconstruct from path
                 division_info = self._reconstruct_division_info_from_path(cache_file)
                 # Try to look up division_id from dropdown
                 if not division_info.get('division_id', '').strip():
                     division_info = self._lookup_division_id(division_info)
+                
+                # If found, save the metadata JSON file
+                if division_info.get('division_id', '').strip():
+                    self._save_metadata_json(metadata_path, division_info)
             
             # Validate division_id is present and not empty before proceeding
             division_id = division_info.get('division_id', '').strip()
