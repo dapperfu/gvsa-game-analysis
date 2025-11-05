@@ -590,9 +590,9 @@ def db() -> None:
 @click.pass_context
 def db_import(ctx: click.Context, workers: int) -> None:
     """
-    Import cached HTML/CSV files into the database.
+    Import cached HTML files into the database.
     
-    Parses cached files from the cache directory and populates the database.
+    Parses cached HTML files from the cache directory and populates the database.
     Run 'gvsa scrape' first to fetch data from the website.
     
     Examples:
@@ -634,6 +634,97 @@ def db_import(ctx: click.Context, workers: int) -> None:
     click.echo(f"Total teams: {total_teams}")
     click.echo(f"Total matches: {total_matches}")
     click.echo(f"Database saved to: {db_path}")
+
+
+@db.command('import-csv')
+@click.option('--cache-dir', type=click.Path(exists=True, file_okay=False, dir_okay=True),
+              default='html_cache', help='Cache directory path (default: html_cache)')
+@click.pass_context
+def db_import_csv(ctx: click.Context, cache_dir: str) -> None:
+    """
+    Import matches from cached CSV files into the database.
+    
+    Scans CSV files in the cache directory and imports match data.
+    This is useful for importing match results that may be more complete in CSV format.
+    
+    Examples:
+    
+        gvsa db import-csv
+    
+        gvsa db import-csv --cache-dir /path/to/cache
+    """
+    from .import_csv import import_csv_matches, find_csv_files
+    
+    db_path = ctx.obj['db_path']
+    verbose = ctx.obj['verbose']
+    
+    if verbose:
+        click.echo(f"Using database: {db_path}")
+        click.echo(f"Cache directory: {cache_dir}")
+    
+    # Initialize database
+    db_instance = GVSA_Database(db_path)
+    
+    # Find all CSV files
+    cache_path = Path(cache_dir)
+    csv_files = find_csv_files(cache_path)
+    
+    if not csv_files:
+        click.echo(f"No CSV files found in {cache_dir}")
+        return
+    
+    click.echo("=" * 80)
+    click.echo("Importing CSV Matches into Database")
+    click.echo("=" * 80)
+    click.echo(f"Database: {db_path}")
+    click.echo(f"Found {len(csv_files)} CSV files\n")
+    
+    total_stats = {
+        'matches_found': 0,
+        'matches_imported': 0,
+        'teams_created': 0,
+        'errors': []
+    }
+    
+    try:
+        for i, csv_file in enumerate(csv_files, 1):
+            if verbose:
+                click.echo(f"[{i}/{len(csv_files)}] Processing {csv_file.relative_to(cache_path)}...")
+            
+            stats = import_csv_matches(csv_file, db_instance, verbose=verbose)
+            
+            total_stats['matches_found'] += stats['matches_found']
+            total_stats['matches_imported'] += stats['matches_imported']
+            total_stats['teams_created'] += stats['teams_created']
+            total_stats['errors'].extend(stats['errors'])
+            
+            if not verbose:
+                if stats['matches_imported'] > 0:
+                    click.echo(f"[{i}/{len(csv_files)}] ✓ {csv_file.name}: {stats['matches_imported']}/{stats['matches_found']} matches")
+                elif stats['errors']:
+                    click.echo(f"[{i}/{len(csv_files)}] ✗ {csv_file.name}: {stats['errors'][-1]}")
+        
+        click.echo(f"\n{'='*80}")
+        click.echo("Summary:")
+        click.echo(f"  CSV files processed: {len(csv_files)}")
+        click.echo(f"  Matches found: {total_stats['matches_found']}")
+        click.echo(f"  Matches imported: {total_stats['matches_imported']}")
+        click.echo(f"  Teams created: {total_stats['teams_created']}")
+        if total_stats['errors']:
+            click.echo(f"  Errors: {len(total_stats['errors'])}")
+            if verbose:
+                for error in total_stats['errors'][:10]:  # Show first 10 errors
+                    click.echo(f"    - {error}")
+        click.echo("=" * 80)
+        
+    except KeyboardInterrupt:
+        click.echo("\n\nInterrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"\n\nError: {e}", err=True)
+        if verbose:
+            traceback.print_exc()
+        sys.exit(1)
 
 
 @cli.group()

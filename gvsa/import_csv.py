@@ -9,9 +9,9 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import re
 import sys
-from gvsa.parse_csv import parse_csv_standings
-from gvsa.db_pony import GVSA_Database
-from gvsa.models import db, Season, Division, TeamSeason, Match
+from .parse_csv import parse_csv_standings
+from .db_pony import GVSA_Database
+from .models import db, Season, Division, TeamSeason, Match
 from pony.orm import db_session, select, commit
 
 
