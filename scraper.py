@@ -599,9 +599,8 @@ class GVSAScraper:
         session.headers.update(self.session.headers)
         
         try:
-            # Use timeout with connect and read timeouts to avoid hanging
-            # (connect_timeout, read_timeout) - both in seconds
-            response = session.post(url, data={'division': division_param}, timeout=(10, 30))
+            # Use single timeout value (revert to original working value)
+            response = session.post(url, data={'division': division_param}, timeout=30)
             response.raise_for_status()
             response.encoding = 'ISO-8859-1'
             html_content = response.text
@@ -609,23 +608,30 @@ class GVSAScraper:
             # Save to cache
             self.save_html_cache(division, html_content)
             
-            # Extract CSV link from HTML and download/cache CSV
-            csv_link = parse_csv_link(html_content)
+            # Extract CSV link from HTML and download/cache CSV (optional, non-blocking)
+            # Use shorter timeout for CSV to avoid blocking if server is slow
+            csv_link = None
+            try:
+                csv_link = parse_csv_link(html_content)
+            except Exception as e:
+                # BeautifulSoup parsing failed - skip CSV for this division
+                pass
+            
             if csv_link:
                 try:
-                    # Download CSV using the extracted link
-                    csv_response = session.get(csv_link, timeout=(10, 30))
+                    # Download CSV with shorter timeout (10s) to avoid blocking
+                    csv_response = session.get(csv_link, timeout=10)
                     csv_response.raise_for_status()
                     csv_content = csv_response.text
                     
                     # Save CSV to cache
                     self.save_csv_cache(division, csv_content)
                     print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML + CSV)")
-                except Exception as e:
-                    # CSV download failed, but HTML is cached
-                    print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched HTML (CSV download failed: {e})")
+                except Exception:
+                    # CSV download failed or timed out - continue with HTML only
+                    print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML only, CSV skipped)")
             else:
-                print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML, no CSV link found)")
+                print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML, no CSV link)")
             
             time.sleep(self.delay)  # Be polite to the server
             return True
