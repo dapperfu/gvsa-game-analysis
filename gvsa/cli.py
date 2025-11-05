@@ -89,23 +89,22 @@ def get_db(ctx: click.Context) -> GVSA_Database:
 def scrape(ctx: click.Context, force_refresh: bool, no_cache: bool, 
           workers: int, delay: float) -> None:
     """
-    Scrape data from gvsoccer.org.
+    Scrape data from gvsoccer.org and cache locally.
     
-    This command performs a two-stage scrape:
-    1. Fetches and caches HTML files from the server
-    2. Parses cached HTML and populates the database
+    Fetches HTML and CSV files from the website and saves them to the cache.
+    This does NOT import data into the database. Use 'gvsa db import' for that.
     
     Examples:
     
-        gvsa scrape --db-path gvsa_data2.db
+        gvsa scrape
     
         gvsa scrape --force-refresh --workers 10
+    
+        gvsa scrape --no-cache
     """
-    db_path = ctx.obj['db_path']
     verbose = ctx.obj['verbose']
     
     if verbose:
-        click.echo(f"Using database: {db_path}")
         click.echo(f"Workers: {workers}, Delay: {delay}s")
         click.echo(f"Force refresh: {force_refresh}, No cache: {no_cache}")
     
@@ -116,32 +115,17 @@ def scrape(ctx: click.Context, force_refresh: bool, no_cache: bool,
         max_workers=workers
     )
     
-    # Initialize database
-    db_instance = GVSA_Database(db_path)
-    
-    # Stage 1: Fetch HTML
+    # Fetch HTML and CSV files
     click.echo("=" * 80)
-    click.echo("STAGE 1: Fetching HTML files from server")
+    click.echo("Fetching HTML and CSV files from gvsoccer.org")
     click.echo("=" * 80)
     fetched_count = scraper.fetch_html_only()
-    
-    # Stage 2: Parse cached HTML
-    click.echo(f"\n{'='*80}")
-    click.echo("STAGE 2: Parsing cached HTML files and populating database")
-    click.echo("=" * 80)
-    standings = scraper.parse_cached_html(db=db_instance)
     
     # Summary
     click.echo(f"\n{'='*80}")
     click.echo("Scraping complete!")
     click.echo(f"HTML files fetched: {fetched_count}")
-    click.echo(f"Successfully parsed: {len(standings)} divisions")
-    
-    total_teams = sum(len(s['teams']) for s in standings)
-    total_matches = sum(len(s['matches']) for s in standings)
-    click.echo(f"Total teams: {total_teams}")
-    click.echo(f"Total matches: {total_matches}")
-    click.echo(f"Database saved to: {db_path}")
+    click.echo("\nTo import data into database, run: gvsa db import")
 
 
 @cli.command()
@@ -591,6 +575,68 @@ def teams(ctx: click.Context, search: Optional[str], club: Optional[str],
 
 
 @cli.group()
+def db() -> None:
+    """
+    Database management commands.
+    
+    Commands for importing cached data and managing the database.
+    """
+    pass
+
+
+@db.command('import')
+@click.option('--workers', default=5, type=int,
+              help='Number of parallel workers (default: 5)')
+@click.pass_context
+def db_import(ctx: click.Context, workers: int) -> None:
+    """
+    Import cached HTML/CSV files into the database.
+    
+    Parses cached files from the cache directory and populates the database.
+    Run 'gvsa scrape' first to fetch data from the website.
+    
+    Examples:
+    
+        gvsa db import
+    
+        gvsa db import --workers 10
+    """
+    db_path = ctx.obj['db_path']
+    verbose = ctx.obj['verbose']
+    
+    if verbose:
+        click.echo(f"Using database: {db_path}")
+        click.echo(f"Workers: {workers}")
+    
+    # Initialize scraper
+    scraper = GVSAScraper(
+        delay=0,  # No delay needed for cached files
+        use_cache=True,
+        max_workers=workers
+    )
+    
+    # Initialize database
+    db_instance = GVSA_Database(db_path)
+    
+    # Parse cached HTML and populate database
+    click.echo("=" * 80)
+    click.echo("Parsing cached HTML files and populating database")
+    click.echo("=" * 80)
+    standings = scraper.parse_cached_html(db=db_instance)
+    
+    # Summary
+    click.echo(f"\n{'='*80}")
+    click.echo("Import complete!")
+    click.echo(f"Successfully parsed: {len(standings)} divisions")
+    
+    total_teams = sum(len(s['teams']) for s in standings)
+    total_matches = sum(len(s['matches']) for s in standings)
+    click.echo(f"Total teams: {total_teams}")
+    click.echo(f"Total matches: {total_matches}")
+    click.echo(f"Database saved to: {db_path}")
+
+
+@cli.group()
 def analyze() -> None:
     """
     Analysis commands for GVSA data.
@@ -720,7 +766,7 @@ def progression(ctx: click.Context, club: Optional[str], min_age: int,
         sys.exit(1)
 
 
-@analyze.command()
+@cli.command()
 @click.option('--format', 'output_format', default='table',
               type=click.Choice(['table', 'json', 'csv'], case_sensitive=False),
               help='Output format (default: table)')
@@ -731,9 +777,9 @@ def stats(ctx: click.Context, output_format: str) -> None:
     
     Examples:
     
-        gvsa analyze stats
+        gvsa stats
     
-        gvsa analyze stats --format json
+        gvsa stats --format json
     """
     db_instance = get_db(ctx)
     
@@ -757,6 +803,189 @@ def stats(ctx: click.Context, output_format: str) -> None:
         print_output(data, output_format, headers)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.group()
+def export() -> None:
+    """
+    Export commands for GVSA data.
+    
+    Export data to various formats (CSV, JSON, etc.).
+    """
+    pass
+
+
+@export.command('csv')
+@click.option('--output', '-o', type=click.Path(), default='gvsa_export.csv',
+              help='Output CSV file path (default: gvsa_export.csv)')
+@click.option('--year', type=int, help='Filter by year')
+@click.option('--season', type=click.Choice(['Fall', 'Spring'], case_sensitive=False),
+              help='Filter by season type')
+@click.pass_context
+def export_csv(ctx: click.Context, output: str, year: Optional[int], 
+               season: Optional[str]) -> None:
+    """
+    Export data to CSV format.
+    
+    Examples:
+    
+        gvsa export csv
+    
+        gvsa export csv --output data.csv --year 2025
+    """
+    db_instance = get_db(ctx)
+    
+    @db_session
+    def get_export_data() -> List[Dict[str, Any]]:
+        """Get data for export."""
+        query = select(ts for ts in TeamSeason)
+        
+        if year:
+            seasons_list = list(select(s for s in Season if s.year == year))
+            if seasons_list:
+                divisions_list = list(select(d for d in Division if d.season in seasons_list))
+                if divisions_list:
+                    query = select(ts for ts in TeamSeason if ts.division in divisions_list)
+        
+        if season:
+            season_type_str = 'Fall' if season == 'Fall' else 'Spring'
+            divisions_list = list(select(d for d in Division if d.season.season_type == season_type_str))
+            if divisions_list:
+                if year:
+                    query = select(ts for ts in query if ts.division in divisions_list)
+                else:
+                    query = select(ts for ts in TeamSeason if ts.division in divisions_list)
+        
+        team_seasons = list(query)
+        result = []
+        
+        for ts in team_seasons:
+            result.append({
+                'team_name': ts.team_name,
+                'club': ts.team.club.name if ts.team.club else 'N/A',
+                'division': ts.division.division_name,
+                'season': ts.division.season.season_name,
+                'year': ts.division.season.year,
+                'season_type': ts.division.season.season_type,
+                'wins': ts.wins,
+                'losses': ts.losses,
+                'ties': ts.ties,
+                'points': ts.points,
+                'goals_for': ts.goals_for,
+                'goals_against': ts.goals_against,
+            })
+        
+        return result
+    
+    try:
+        import csv as csv_module
+        from pathlib import Path
+        
+        data = get_export_data()
+        if not data:
+            click.echo("No data to export", err=True)
+            return
+        
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(output_path, 'w', newline='', encoding='utf-8') as f:
+            fieldnames = ['team_name', 'club', 'division', 'season', 'year', 'season_type',
+                         'wins', 'losses', 'ties', 'points', 'goals_for', 'goals_against']
+            writer = csv_module.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(data)
+        
+        click.echo(f"Exported {len(data)} records to {output_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        if ctx.obj['verbose']:
+            traceback.print_exc()
+        sys.exit(1)
+
+
+@export.command('json')
+@click.option('--output', '-o', type=click.Path(), default='gvsa_export.json',
+              help='Output JSON file path (default: gvsa_export.json)')
+@click.option('--year', type=int, help='Filter by year')
+@click.option('--season', type=click.Choice(['Fall', 'Spring'], case_sensitive=False),
+              help='Filter by season type')
+@click.pass_context
+def export_json(ctx: click.Context, output: str, year: Optional[int],
+                season: Optional[str]) -> None:
+    """
+    Export data to JSON format.
+    
+    Examples:
+    
+        gvsa export json
+    
+        gvsa export json --output data.json --year 2025
+    """
+    db_instance = get_db(ctx)
+    
+    @db_session
+    def get_export_data() -> List[Dict[str, Any]]:
+        """Get data for export."""
+        query = select(ts for ts in TeamSeason)
+        
+        if year:
+            seasons_list = list(select(s for s in Season if s.year == year))
+            if seasons_list:
+                divisions_list = list(select(d for d in Division if d.season in seasons_list))
+                if divisions_list:
+                    query = select(ts for ts in TeamSeason if ts.division in divisions_list)
+        
+        if season:
+            season_type_str = 'Fall' if season == 'Fall' else 'Spring'
+            divisions_list = list(select(d for d in Division if d.season.season_type == season_type_str))
+            if divisions_list:
+                if year:
+                    query = select(ts for ts in query if ts.division in divisions_list)
+                else:
+                    query = select(ts for ts in TeamSeason if ts.division in divisions_list)
+        
+        team_seasons = list(query)
+        result = []
+        
+        for ts in team_seasons:
+            result.append({
+                'team_name': ts.team_name,
+                'club': ts.team.club.name if ts.team.club else 'N/A',
+                'division': ts.division.division_name,
+                'season': ts.division.season.season_name,
+                'year': ts.division.season.year,
+                'season_type': ts.division.season.season_type,
+                'wins': ts.wins,
+                'losses': ts.losses,
+                'ties': ts.ties,
+                'points': ts.points,
+                'goals_for': ts.goals_for,
+                'goals_against': ts.goals_against,
+            })
+        
+        return result
+    
+    try:
+        from pathlib import Path
+        
+        data = get_export_data()
+        if not data:
+            click.echo("No data to export", err=True)
+            return
+        
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        click.echo(f"Exported {len(data)} records to {output_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        if ctx.obj['verbose']:
+            traceback.print_exc()
         sys.exit(1)
 
 
