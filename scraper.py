@@ -514,6 +514,7 @@ class GVSAScraper:
             remaining = len(divisions) - cached_count
             print(f"\nFetching HTML + CSV for {remaining} divisions ({(len(divisions) - cached_count)} new, {cached_count} already cached) with {self.max_workers} workers...")
             
+            completed_count = 0
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 # Submit all tasks
                 futures = {
@@ -529,13 +530,18 @@ class GVSAScraper:
                 # Collect results as they complete
                 for future in as_completed(futures):
                     div_idx, division = futures[future]
+                    completed_count += 1
                     try:
                         fetched = future.result()
                         if fetched:
                             total_fetched += 1
                     except Exception as e:
                         display_name = division.get('display_name', division.get('division_name', 'unknown'))
-                        print(f"Error fetching HTML for {display_name}: {e}")
+                        print(f"[{div_idx}/{len(divisions)}] ✗ {display_name}: Error - {e}")
+                    
+                    # Periodic progress update
+                    if completed_count % 10 == 0 or completed_count == len(divisions):
+                        print(f"Progress: {completed_count}/{len(divisions)} divisions processed")
         
         print(f"\n{'='*80}")
         print("HTML Fetching Summary:")
@@ -573,6 +579,9 @@ class GVSAScraper:
             print(f"[{div_idx}/{total}] ⊘ {display_name}: Already cached (HTML + CSV)")
             return False
         
+        # Print progress when starting fetch
+        print(f"[{div_idx}/{total}] → {display_name}: Fetching HTML...")
+        
         # Fetch from web
         url = f"{self.BASE_URL}/standings.jsp"
         # Build division parameter with exact spacing/padding as seen in mitm logs
@@ -593,7 +602,9 @@ class GVSAScraper:
         session.headers.update(self.session.headers)
         
         try:
-            response = session.post(url, data={'division': division_param}, timeout=30)
+            # Use timeout with connect and read timeouts to avoid hanging
+            # (connect_timeout, read_timeout) - both in seconds
+            response = session.post(url, data={'division': division_param}, timeout=(10, 30))
             response.raise_for_status()
             response.encoding = 'ISO-8859-1'
             html_content = response.text
@@ -602,11 +613,12 @@ class GVSAScraper:
             self.save_html_cache(division, html_content)
             
             # Extract CSV link from HTML and download/cache CSV
+            print(f"[{div_idx}/{total}] → {display_name}: Fetching CSV...")
             csv_link = parse_csv_link(html_content)
             if csv_link:
                 try:
                     # Download CSV using the extracted link
-                    csv_response = session.get(csv_link, timeout=30)
+                    csv_response = session.get(csv_link, timeout=(10, 30))
                     csv_response.raise_for_status()
                     csv_content = csv_response.text
                     
@@ -621,8 +633,14 @@ class GVSAScraper:
             
             time.sleep(self.delay)  # Be polite to the server
             return True
+        except requests.Timeout as e:
+            print(f"[{div_idx}/{total}] ✗ {display_name}: Request timeout - {e}")
+            return False
         except requests.RequestException as e:
             print(f"[{div_idx}/{total}] ✗ {display_name}: Failed to fetch - {e}")
+            return False
+        except Exception as e:
+            print(f"[{div_idx}/{total}] ✗ {display_name}: Unexpected error - {e}")
             return False
         finally:
             session.close()
