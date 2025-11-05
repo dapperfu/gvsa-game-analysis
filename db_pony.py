@@ -543,10 +543,10 @@ class GVSA_Database:
             season_type_str
         )
         
-        # Ensure division_id is present (Required field)
-        division_id = division_info.get('division_id') or ''
-        if division_id is None:
-            division_id = ''
+        # Validate division_id is present and not empty (Required field)
+        division_id = division_info.get('division_id', '').strip()
+        if not division_id:
+            raise ValueError(f"division_id is required but missing for division: {division_info.get('division_name', 'unknown')}")
         
         # Get or create division
         division = self.get_or_create_division(

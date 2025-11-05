@@ -691,72 +691,80 @@ class GVSAScraper:
                     # Remove display_name if present (redundant with division_name)
                     if 'display_name' in division_info:
                         del division_info['display_name']
-                    # Ensure division_id is present (Required field)
-                    if 'division_id' not in division_info:
-                        division_info['division_id'] = ''
+                    
+                    # Validate division_id is present and not empty
+                    division_id = division_info.get('division_id', '').strip()
+                    if not division_id:
+                        # division_id is missing or empty - need to look it up from dropdown
+                        division_name = division_info.get('division_name', '').strip()
+                        season_name = division_info.get('season_name', '').strip()
+                        
+                        if division_name and season_name:
+                            # Try to find division_id by matching division_name in dropdown
+                            # Extract year from season_name
+                            year_match = re.search(r'\b(20\d{2})\b', season_name)
+                            if year_match:
+                                year = year_match.group(1)
+                                season_type = division_info.get('season_type', 'Fall')
+                                
+                                # Re-fetch divisions for this season to get division_id
+                                # Match by division_name (should be 1:1)
+                                try:
+                                    # Get all seasons to find the right one
+                                    seasons_list = self.get_seasons()
+                                    target_season = None
+                                    for s in seasons_list:
+                                        if s.get('season_name', '').strip() == season_name:
+                                            target_season = s
+                                            break
+                                    
+                                    if target_season:
+                                        divisions_list = self.get_divisions(target_season)
+                                        # Find matching division by name (should be exact match)
+                                        for div in divisions_list:
+                                            div_name = div.get('division_name', '').strip()
+                                            # Normalize both names for comparison
+                                            div_name_norm = ' '.join(div_name.split())
+                                            division_name_norm = ' '.join(division_name.split())
+                                            
+                                            if div_name_norm == division_name_norm:
+                                                division_id = div.get('division_id', '').strip()
+                                                if division_id:
+                                                    division_info['division_id'] = division_id
+                                                    division_info['season_id1'] = div.get('season_id1', '')
+                                                    division_info['season_id2'] = div.get('season_id2', '')
+                                                    division_info['year_season'] = div.get('year_season', '')
+                                                    break
+                                except Exception as lookup_error:
+                                    # If lookup fails, we'll handle it below
+                                    pass
+                        
+                        # If still no division_id, this is an error - we can't proceed
+                        if not division_info.get('division_id', '').strip():
+                            raise ValueError(f"division_id is required but missing for {division_name}. "
+                                          f"Could not look it up from dropdown.")
                 except Exception as e:
                     print(f"  - Warning: Could not read metadata for {cache_file.name}: {e}")
                     # Fall back to reconstructing from path
-                    # New structure: html_cache/{year}_{season_type}/{division_name}.html
-                    parts = cache_file.parts
-                    if len(parts) >= 2:
-                        cache_dir_name = parts[-2]  # e.g., "2025_Fall"
-                        # Parse year and season type from directory name
-                        if '_' in cache_dir_name:
-                            year_str, season_type_str = cache_dir_name.rsplit('_', 1)
-                            # Normalize season_type to "Fall" or "Spring"
-                            season_type = season_type_str  # Already normalized in cache path
-                            season_name = f"{season_type_str} {year_str}"
-                            division_info = {
-                                'division_id': '',  # Required field, set to empty if not available
-                                'year': year_str,
-                                'season_name': season_name,
-                                'division_name': cache_file.stem.replace('_', ' '),
-                                'season_type': season_type
-                            }
-                        else:
-                            # Fallback for old format
-                            division_info = {
-                                'division_id': '',
-                                'year': cache_dir_name,
-                                'season_name': cache_dir_name,
-                                'division_name': cache_file.stem.replace('_', ' '),
-                                'season_type': 'Fall'
-                            }
+                    division_info = self._reconstruct_division_info_from_path(cache_file)
+                    # Try to look up division_id from dropdown
+                    if not division_info.get('division_id', '').strip():
+                        division_info = self._lookup_division_id(division_info)
             else:
                 # No metadata file - reconstruct from path
-                # New structure: html_cache/{year}_{season_type}/{division_name}.html
-                parts = cache_file.parts
-                if len(parts) >= 2:
-                    cache_dir_name = parts[-2]  # e.g., "2025_Fall"
-                    # Parse year and season type from directory name
-                    if '_' in cache_dir_name:
-                        year_str, season_type_str = cache_dir_name.rsplit('_', 1)
-                        # Normalize season_type to "Fall" or "Spring"
-                        season_type = season_type_str  # Already normalized in cache path
-                        season_name = f"{season_type_str} {year_str}"
-                        division_info = {
-                            'division_id': '',
-                            'year': year_str,
-                            'season_name': season_name,
-                            'division_name': cache_file.stem.replace('_', ' '),
-                            'season_type': season_type
-                        }
-                    else:
-                        # Fallback for old format
-                        division_info = {
-                            'division_id': '',
-                            'year': cache_dir_name,
-                            'season_name': cache_dir_name,
-                            'division_name': cache_file.stem.replace('_', ' '),
-                            'season_type': 'Fall'
-                        }
+                division_info = self._reconstruct_division_info_from_path(cache_file)
+                # Try to look up division_id from dropdown
+                if not division_info.get('division_id', '').strip():
+                    division_info = self._lookup_division_id(division_info)
+            
+            # Validate division_id is present and not empty before proceeding
+            division_id = division_info.get('division_id', '').strip()
+            if not division_id:
+                raise ValueError(f"division_id is required but missing for {division_info.get('division_name', 'unknown')}. "
+                              f"Could not look it up from dropdown.")
             
             # Parse HTML
             standings_data = parse_standings(html_content)
-            # Ensure division_id is present before saving
-            if 'division_id' not in division_info or division_info.get('division_id') is None:
-                division_info['division_id'] = ''
             standings_data['division'] = division_info
             
             # Save to database

@@ -153,13 +153,32 @@ def parse_divisions(html_content: str) -> List[Dict[str, Any]]:
                     # Fall back to HTML value
                     season_type = season_type_from_html if season_type_from_html in ('F', 'S') else 'F'
                 
+                division_id = parts[0].strip()
+                division_name = parts[5].strip()
+                
+                # Validate division_id is present and not empty
+                if not division_id:
+                    # Skip divisions without valid division_id
+                    continue
+                
+                # Validate division_name matches dropdown text (should be 1:1)
+                # Normalize both for comparison (remove extra whitespace)
+                text_normalized = ' '.join(text.split())
+                division_name_normalized = ' '.join(division_name.split())
+                
+                # They should match (dropdown text is the display name)
+                # If they don't match exactly, use the dropdown text as the authoritative source
+                if text_normalized != division_name_normalized:
+                    # Use dropdown text as division_name (it's the authoritative source)
+                    division_name = text_normalized
+                
                 divisions.append({
-                    'division_id': parts[0].strip(),
+                    'division_id': division_id,
                     'year_season': parts[1].strip(),  # Keep for POST requests only
                     'season_id1': parts[2].strip(),
                     'season_id2': parts[3].strip(),
                     'season_name': season_name,
-                    'division_name': parts[5].strip(),
+                    'division_name': division_name,
                     'season_type': season_type,
                     'display_name': text  # Display name from HTML option text
                 })
