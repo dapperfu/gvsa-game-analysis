@@ -230,17 +230,16 @@ class GVSAScraper:
         
         html_path, json_path, csv_path = self.get_cache_path(division)
         
-        with self.cache_lock:
-            try:
-                # Save HTML
-                html_path.write_text(html_content, encoding='utf-8')
-                
-                # Save metadata (division info) - use helper method
-                self._save_metadata_json(json_path, division)
-                
-                # Note: CSV is cached separately by save_csv_cache()
-            except Exception as e:
-                print(f"  - Error saving cache: {e}")
+        try:
+            # Save HTML - no lock needed, each thread writes to different files
+            html_path.write_text(html_content, encoding='utf-8')
+            
+            # Save metadata (division info) - use helper method
+            self._save_metadata_json(json_path, division)
+            
+            # Note: CSV is cached separately by save_csv_cache()
+        except Exception as e:
+            print(f"  - Error saving cache: {e}")
     
     def get_cached_csv(self, division: Dict[str, Any]) -> Optional[str]:
         """
@@ -288,11 +287,11 @@ class GVSAScraper:
         
         _, _, csv_path = self.get_cache_path(division)
         
-        with self.cache_lock:
-            try:
-                csv_path.write_text(csv_content, encoding='utf-8')
-            except Exception as e:
-                print(f"  - Error saving CSV cache: {e}")
+        try:
+            # No lock needed, each thread writes to different files
+            csv_path.write_text(csv_content, encoding='utf-8')
+        except Exception as e:
+            print(f"  - Error saving CSV cache: {e}")
     
     def get_seasons(self) -> List[Dict[str, str]]:
         """
@@ -538,9 +537,6 @@ class GVSAScraper:
             
             completed_count = 0
             
-            # Print thread dump instructions
-            print(f"\nTo dump thread stacks if it hangs, run: kill -USR1 {os.getpid()}", file=sys.stderr)
-            
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 # Submit all tasks
                 futures = {
@@ -622,81 +618,59 @@ class GVSAScraper:
                 f"{division['season_type']}"
             )
             
-            print(f"DEBUG: Creating session for [{div_idx}/{total}] {display_name}", file=sys.stderr)
             # Create a new session for thread safety
             session = requests.Session()
             session.headers.update(self.session.headers)
             
-            print(f"DEBUG: POST request starting for [{div_idx}/{total}] {display_name}", file=sys.stderr)
             try:
-                # Use single timeout value (revert to original working value)
+                # Use single timeout value
                 response = session.post(url, data={'division': division_param}, timeout=30)
-                print(f"DEBUG: POST request completed for [{div_idx}/{total}] {display_name}", file=sys.stderr)
                 response.raise_for_status()
                 response.encoding = 'ISO-8859-1'
                 html_content = response.text
                 
-                print(f"DEBUG: Saving HTML cache for [{div_idx}/{total}] {display_name}", file=sys.stderr)
                 # Save to cache
                 self.save_html_cache(division, html_content)
-                print(f"DEBUG: HTML cache saved for [{div_idx}/{total}] {display_name}", file=sys.stderr)
                 
                 # Extract CSV link from HTML and download/cache CSV (optional, non-blocking)
-                # Use shorter timeout for CSV to avoid blocking if server is slow
-                print(f"DEBUG: Parsing CSV link for [{div_idx}/{total}] {display_name}", file=sys.stderr)
                 csv_link = None
                 try:
                     csv_link = parse_csv_link(html_content)
-                    print(f"DEBUG: CSV link parsed: {csv_link is not None} for [{div_idx}/{total}] {display_name}", file=sys.stderr)
-                except Exception as e:
+                except Exception:
                     # BeautifulSoup parsing failed - skip CSV for this division
-                    print(f"DEBUG: CSV link parsing failed for [{div_idx}/{total}] {display_name}: {e}", file=sys.stderr)
                     pass
                 
                 if csv_link:
-                    print(f"DEBUG: Downloading CSV for [{div_idx}/{total}] {display_name}", file=sys.stderr)
                     try:
                         # Download CSV with shorter timeout (10s) to avoid blocking
                         csv_response = session.get(csv_link, timeout=10)
-                        print(f"DEBUG: CSV download completed for [{div_idx}/{total}] {display_name}", file=sys.stderr)
                         csv_response.raise_for_status()
                         csv_content = csv_response.text
                         
-                        print(f"DEBUG: Saving CSV cache for [{div_idx}/{total}] {display_name}", file=sys.stderr)
                         # Save CSV to cache
                         self.save_csv_cache(division, csv_content)
-                        print(f"DEBUG: CSV cache saved for [{div_idx}/{total}] {display_name}", file=sys.stderr)
                         print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML + CSV)")
-                    except Exception as e:
+                    except Exception:
                         # CSV download failed or timed out - continue with HTML only
-                        print(f"DEBUG: CSV download failed for [{div_idx}/{total}] {display_name}: {e}", file=sys.stderr)
                         print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML only, CSV skipped)")
                 else:
                     print(f"[{div_idx}/{total}] ✓ {display_name}: Fetched and cached (HTML, no CSV link)")
                 
-                print(f"DEBUG: Sleeping {self.delay}s for [{div_idx}/{total}] {display_name}", file=sys.stderr)
                 time.sleep(self.delay)  # Be polite to the server
-                print(f"DEBUG: _fetch_html_only END (success) [{div_idx}/{total}] {display_name}", file=sys.stderr)
                 return True
             except requests.Timeout as e:
                 print(f"[{div_idx}/{total}] ✗ {display_name}: Request timeout - {e}")
-                print(f"DEBUG: _fetch_html_only END (timeout) [{div_idx}/{total}] {display_name}", file=sys.stderr)
                 return False
             except requests.RequestException as e:
                 print(f"[{div_idx}/{total}] ✗ {display_name}: Failed to fetch - {e}")
-                print(f"DEBUG: _fetch_html_only END (RequestException) [{div_idx}/{total}] {display_name}", file=sys.stderr)
                 return False
             except Exception as e:
                 print(f"[{div_idx}/{total}] ✗ {display_name}: Unexpected error - {e}")
-                print(f"DEBUG: _fetch_html_only END (Exception) [{div_idx}/{total}] {display_name}: {traceback.format_exc()}", file=sys.stderr)
+                if __debug__:
+                    import pdb; pdb.post_mortem()
                 return False
             finally:
-                print(f"DEBUG: Closing session for [{div_idx}/{total}] {display_name}", file=sys.stderr)
                 session.close()
-                print(f"DEBUG: Session closed for [{div_idx}/{total}] {display_name}", file=sys.stderr)
-        except Exception as e:
-            print(f"DEBUG: Outer exception in _fetch_html_only [{div_idx}/{total}] {display_name}: {traceback.format_exc()}", file=sys.stderr)
-            raise
     
     def parse_cached_html(self, db: Optional[GVSA_Database] = None) -> List[Dict[str, Any]]:
         """
@@ -901,8 +875,8 @@ class GVSAScraper:
             'season_type': season_type
         }
         
-        with self.cache_lock:
-            metadata_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+        # No lock needed - each thread writes to different files
+        metadata_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
     
     def _parse_cached_file(self, cache_file: Path, idx: int, total: int, db: Optional[GVSA_Database] = None) -> Optional[Dict[str, Any]]:
         """
