@@ -53,14 +53,28 @@ def parse_team_standings(html_content: str) -> List[Dict[str, Any]]:
         if len(cells) >= 9:  # Team, W, L, T, F, PTS, GF, GA, GD
             try:
                 team_name = cells[0].get_text(strip=True)
-                wins = int(cells[1].get_text(strip=True) or '0')
-                losses = int(cells[2].get_text(strip=True) or '0')
-                ties = int(cells[3].get_text(strip=True) or '0')
-                forfeits = int(cells[4].get_text(strip=True) or '0')
-                points = int(cells[5].get_text(strip=True) or '0')
-                goals_for = int(cells[6].get_text(strip=True) or '0')
-                goals_against = int(cells[7].get_text(strip=True) or '0')
-                goal_differential = int(cells[8].get_text(strip=True) or '0')
+                
+                # Skip rows with empty team names
+                if not team_name:
+                    continue
+                
+                # Parse numeric values, handling negative numbers and empty strings
+                def parse_int(value: str) -> int:
+                    """Parse integer value, handling empty strings and negative numbers."""
+                    value = value.strip()
+                    if not value:
+                        return 0
+                    # Handle negative numbers (e.g., "-1", " -21")
+                    return int(value)
+                
+                wins = parse_int(cells[1].get_text(strip=True))
+                losses = parse_int(cells[2].get_text(strip=True))
+                ties = parse_int(cells[3].get_text(strip=True))
+                forfeits = parse_int(cells[4].get_text(strip=True))
+                points = parse_int(cells[5].get_text(strip=True))
+                goals_for = parse_int(cells[6].get_text(strip=True))
+                goals_against = parse_int(cells[7].get_text(strip=True))
+                goal_differential = parse_int(cells[8].get_text(strip=True))
                 
                 teams.append({
                     'team_name': team_name,
