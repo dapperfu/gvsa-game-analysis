@@ -42,24 +42,8 @@ dependencies = [
 ]
 
 [project.scripts]
-gvsa = "cli:main"
+gvsa = "gvsa.cli:main"
 
 [tool.setuptools]
-# Include all Python modules at root level
-py-modules = [
-    "cli",
-    "cli_output",
-    "scraper",
-    "scraper_selenium",
-    "db_pony",
-    "models",
-    "parse_seasons",
-    "parse_standings",
-    "parse_csv",
-    "team_progression",
-    "age_progression",
-    "team_name_parser",
-    "team_matching_candidates",
-    "analyze_clubs",
-]
+packages = ["gvsa"]
 

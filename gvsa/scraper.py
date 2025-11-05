@@ -12,15 +12,35 @@ import time
 import re
 import json
 import sys
+import os
 import traceback
+import faulthandler
+import signal
+import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-from parse_seasons import parse_divisions, parse_seasons_list
-from parse_standings import parse_standings, parse_csv_link
-from parse_csv import parse_csv_standings, download_csv_standings
-from db_pony import GVSA_Database
+from .parse_seasons import parse_divisions, parse_seasons_list
+from .parse_standings import parse_standings, parse_csv_link
+from .parse_csv import parse_csv_standings, download_csv_standings
+from .db_pony import GVSA_Database
+
+# Enable faulthandler to dump stack traces on hang
+faulthandler.enable()
+
+def dump_thread_stacks(signum: int, frame: Any) -> None:
+    """Dump all thread stacks when receiving SIGUSR1."""
+    print("\n" + "="*80, file=sys.stderr)
+    print(f"THREAD DUMP (signal {signum})", file=sys.stderr)
+    print("="*80, file=sys.stderr)
+    for thread_id, frame in sys._current_frames().items():
+        print(f"\nThread {thread_id}:", file=sys.stderr)
+        traceback.print_stack(frame, file=sys.stderr)
+    print("="*80 + "\n", file=sys.stderr)
+
+# Register signal handler for thread dumps
+signal.signal(signal.SIGUSR1, dump_thread_stacks)
 
 
 class GVSAScraper:
@@ -517,11 +537,12 @@ class GVSAScraper:
             print(f"\nFetching HTML + CSV for {remaining} divisions ({(len(divisions) - cached_count)} new, {cached_count} already cached) with {self.max_workers} workers...")
             
             completed_count = 0
-            print(f"DEBUG: Submitting {len(divisions)} tasks to ThreadPoolExecutor with {self.max_workers} workers", file=sys.stderr)
+            
+            # Print thread dump instructions
+            print(f"\nTo dump thread stacks if it hangs, run: kill -USR1 {os.getpid()}", file=sys.stderr)
             
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 # Submit all tasks
-                print(f"DEBUG: Creating futures for all divisions", file=sys.stderr)
                 futures = {
                     executor.submit(
                         self._fetch_html_only,
@@ -531,11 +552,9 @@ class GVSAScraper:
                     ): (div_idx, division)
                     for div_idx, division in enumerate(divisions)
                 }
-                print(f"DEBUG: All {len(futures)} futures submitted, waiting for completion...", file=sys.stderr)
                 
                 # Collect results as they complete
                 for future in as_completed(futures):
-                    print(f"DEBUG: Got completed future", file=sys.stderr)
                     div_idx, division = futures[future]
                     completed_count += 1
                     try:
@@ -545,13 +564,11 @@ class GVSAScraper:
                     except Exception as e:
                         display_name = division.get('display_name', division.get('division_name', 'unknown'))
                         print(f"[{div_idx}/{len(divisions)}] ✗ {display_name}: Error - {e}")
-                        print(f"DEBUG: Exception in future.result(): {traceback.format_exc()}", file=sys.stderr)
+                        traceback.print_exc()
                     
                     # Periodic progress update (every 25 divisions or at completion)
                     if completed_count % 25 == 0 or completed_count == len(divisions):
                         print(f"Progress: {completed_count}/{len(divisions)} divisions processed")
-                
-                print(f"DEBUG: All futures completed, exiting ThreadPoolExecutor context", file=sys.stderr)
         
         print(f"\n{'='*80}")
         print("HTML Fetching Summary:")
@@ -581,16 +598,13 @@ class GVSAScraper:
             True if HTML was fetched/saved, False otherwise
         """
         display_name = division.get('display_name', division.get('division_name', 'unknown'))
-        print(f"DEBUG: _fetch_html_only START [{div_idx}/{total}] {display_name}", file=sys.stderr)
         
         try:
             # Check if already cached (both HTML and CSV)
-            print(f"DEBUG: Checking cache for [{div_idx}/{total}] {display_name}", file=sys.stderr)
             html_cached = self.get_cached_html(division)
             csv_cached = self.get_cached_csv(division)
             if html_cached and csv_cached:
                 print(f"[{div_idx}/{total}] ⊘ {display_name}: Already cached (HTML + CSV)")
-                print(f"DEBUG: _fetch_html_only END (cached) [{div_idx}/{total}] {display_name}", file=sys.stderr)
                 return False
             
             # Fetch from web
