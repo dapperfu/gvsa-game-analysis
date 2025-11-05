@@ -1,0 +1,37 @@
+# Version Bumping Rules
+
+## Automatic Version Bumping
+
+After every 10 commits, you MUST bump the version number by 0.0.1 (patch version increment) immediately prior to the last commit.
+
+### Version Bump Logic:
+- **Patch increment (0.0.1)**: After every 10 commits, increment the patch version (x.y.z -> x.y.z+1)
+- **Minor increment (0.x.0)**: Every 1000 commits (100 version bumps of 0.0.1), roll over to the next minor version (x.y.z -> x.y+1.0)
+
+### Implementation Steps:
+1. Count commits since last version bump
+2. When commit count reaches a multiple of 10:
+   - Calculate new version based on current version and commit count
+   - Update version in ALL locations:
+     - `pyproject.toml` (version field)
+     - `gvsa/__init__.py` (__version__ variable)
+     - `gvsa/cli.py` (version parameter in @click.version_option)
+   - Create a version bump commit with message: "Bump version to X.Y.Z"
+   - This version bump commit should be made immediately prior to the 10th commit
+
+### Version Calculation:
+- For patch increments: If current version is X.Y.Z, new version is X.Y.(Z+1)
+- For minor increments: If current version is X.Y.Z and we've reached 1000 commits total, new version is X.(Y+1).0
+
+### Example Flow:
+- Commits 1-9: No version bump
+- Commit 10: Bump version (e.g., 1.0.0 -> 1.0.1) BEFORE making commit 10
+- Commits 11-19: No version bump
+- Commit 20: Bump version (e.g., 1.0.1 -> 1.0.2) BEFORE making commit 20
+- ...continues until 1000 commits...
+- At commit 1000: Bump version (e.g., 1.9.9 -> 1.10.0) BEFORE making commit 1000
+
+### Important Notes:
+- Version bump must happen BEFORE the commit that triggers it (not after)
+- All version strings must be kept in sync across all files
+- Version bump commits should follow the standard commit message format specified in user rules
