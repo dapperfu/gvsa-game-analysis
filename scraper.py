@@ -754,6 +754,9 @@ class GVSAScraper:
             
             # Parse HTML
             standings_data = parse_standings(html_content)
+            # Ensure division_id is present before saving
+            if 'division_id' not in division_info or division_info.get('division_id') is None:
+                division_info['division_id'] = ''
             standings_data['division'] = division_info
             
             # Save to database

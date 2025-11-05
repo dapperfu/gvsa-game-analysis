@@ -544,8 +544,8 @@ class GVSA_Database:
         )
         
         # Ensure division_id is present (Required field)
-        division_id = division_info.get('division_id', '')
-        if not division_id:
+        division_id = division_info.get('division_id') or ''
+        if division_id is None:
             division_id = ''
         
         # Get or create division
