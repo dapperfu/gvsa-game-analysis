@@ -215,12 +215,15 @@ def extract_age_group(division_name: str) -> Optional[str]:
     import re
     
     # Match patterns like U10, U11, U15/16, U17/19
+    # Handle both spaces and underscores in division names
     range_pattern = r'U(\d{1,2})/(\d{1,2})'
     match = re.search(range_pattern, division_name)
     if match:
         return f"U{match.group(1)}/{match.group(2)}"
     
-    single_pattern = r'U(\d{1,2})\b'
+    # Use negative lookahead to ensure not followed by another digit
+    # This works with spaces, underscores, and other non-digit characters
+    single_pattern = r'U(\d{1,2})(?!\d)'
     match = re.search(single_pattern, division_name)
     if match:
         return f"U{match.group(1)}"

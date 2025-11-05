@@ -43,7 +43,9 @@ def extract_age_group(division_name: str) -> Optional[Tuple[int, int]]:
         return (min_age, max_age)
     
     # Pattern 2: U10, U11, U12, etc. (single age)
-    single_pattern = r'U(\d{1,2})\b'
+    # Use negative lookahead to ensure not followed by another digit
+    # This works with spaces, underscores, and other non-digit characters
+    single_pattern = r'U(\d{1,2})(?!\d)'
     match = re.search(single_pattern, division_name)
     if match:
         age = int(match.group(1))
