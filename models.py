@@ -7,10 +7,17 @@ divisions, matches, clubs, and team progression across seasons.
 """
 from pony.orm import Database, Required, Optional, Set, PrimaryKey
 from datetime import datetime
+from enum import Enum
 
 
 # Initialize database
 db = Database()
+
+
+class SeasonType(Enum):
+    """Season type enumeration."""
+    Fall = "Fall"
+    Spring = "Spring"
 
 
 class Season(db.Entity):
@@ -19,26 +26,50 @@ class Season(db.Entity):
     
     Attributes
     ----------
-    year_season : str
-        Year range (e.g., "2025/2026")
+    year : int
+        Year (e.g., 2025)
     season_name : str
         Season name (e.g., "Fall 2025")
     season_type : str
-        Season type (e.g., "F" for Fall, "S" for Spring)
+        Season type: "Fall" or "Spring" (stored as string, use SeasonType enum for validation)
     divisions : Set[Division]
         Divisions in this season
     scraped_at : datetime
         When this season was scraped
     """
     id = PrimaryKey(int, auto=True)
-    year_season = Required(str)
+    year = Required(int)
     season_name = Required(str)
-    season_type = Required(str)
+    _season_type = Required(str, column='season_type')  # Store as string in DB
     divisions = Set('Division')
     scraped_at = Required(datetime, default=datetime.now)
     
+    @property
+    def season_type(self) -> SeasonType:
+        """Get season_type as enum."""
+        return SeasonType(self._season_type)
+    
+    @season_type.setter
+    def season_type(self, value: SeasonType | str) -> None:
+        """Set season_type, accepting enum or string."""
+        if isinstance(value, SeasonType):
+            self._season_type = value.value
+        elif isinstance(value, str):
+            # Validate string value
+            if value not in ('Fall', 'Spring', 'F', 'S'):
+                raise ValueError(f"Invalid season_type: {value}")
+            # Normalize to full name
+            if value == 'F':
+                self._season_type = 'Fall'
+            elif value == 'S':
+                self._season_type = 'Spring'
+            else:
+                self._season_type = value
+        else:
+            raise TypeError(f"season_type must be SeasonType or str, got {type(value)}")
+    
     def __str__(self) -> str:
-        return f"{self.season_name} ({self.year_season})"
+        return f"{self.season_name}"
 
 
 class Division(db.Entity):

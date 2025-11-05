@@ -90,8 +90,10 @@ class GVSAScraper:
         """
         Get the cache file paths for a division (HTML and metadata).
         
-        Structure: html_cache/{year_season}/{season_name}/{division_name}.html
-        Metadata: html_cache/{year_season}/{season_name}/{division_name}.json
+        Structure: html_cache/{year}_{season_type}/{division_name}.html
+        Metadata: html_cache/{year}_{season_type}/{division_name}.json
+        
+        Examples: html_cache/2025_Fall/, html_cache/2025_Spring/
         
         Parameters
         ----------
@@ -103,11 +105,24 @@ class GVSAScraper:
         tuple[Path, Path]
             Tuple of (HTML file path, metadata JSON file path)
         """
-        year_season = self.sanitize_filename(division.get('year_season', 'unknown'))
-        season_name = self.sanitize_filename(division.get('season_name', 'unknown'))
+        # Extract year from season_name (e.g., "Fall 2025" -> "2025")
+        season_name = division.get('season_name', '')
+        year = 'unknown'
+        if season_name:
+            # Try to extract year from season_name (e.g., "Fall 2025" -> "2025")
+            year_match = re.search(r'\b(20\d{2})\b', season_name)
+            if year_match:
+                year = year_match.group(1)
+        
+        # Get season type: "F" -> "Fall", "S" -> "Spring"
+        season_type_code = division.get('season_type', 'F')
+        season_type = 'Fall' if season_type_code == 'F' else 'Spring'
+        
+        # Create cache directory: {year}_{season_type}
+        cache_dir_name = f"{year}_{season_type}"
         division_name = self.sanitize_filename(division.get('division_name', division.get('display_name', 'unknown')))
         
-        cache_dir = self.CACHE_DIR / year_season / season_name
+        cache_dir = self.CACHE_DIR / cache_dir_name
         cache_dir.mkdir(parents=True, exist_ok=True)
         
         html_path = cache_dir / f"{division_name}.html"
@@ -197,15 +212,34 @@ class GVSAScraper:
                 html_path.write_text(html_content, encoding='utf-8')
                 
                 # Save metadata (division info)
+                # Extract year from season_name (e.g., "Spring 2019" -> "2019")
+                season_name = division.get('season_name', '')
+                year = 'unknown'
+                if season_name:
+                    year_match = re.search(r'\b(20\d{2})\b', season_name)
+                    if year_match:
+                        year = year_match.group(1)
+                
+                # Normalize season_type: "F" -> "Fall", "S" -> "Spring"
+                season_type_code = division.get('season_type', 'F')
+                # Also check season_name to ensure correctness
+                if 'Spring' in season_name:
+                    season_type = 'Spring'
+                elif 'Fall' in season_name:
+                    season_type = 'Fall'
+                else:
+                    season_type = 'Fall' if season_type_code == 'F' else 'Spring'
+                
+                division_name = division.get('division_name', division.get('display_name', ''))
+                
                 metadata = {
                     'division_id': division.get('division_id', ''),
-                    'year_season': division.get('year_season', ''),
+                    'year': year,
                     'season_id1': division.get('season_id1', ''),
                     'season_id2': division.get('season_id2', ''),
-                    'season_name': division.get('season_name', ''),
-                    'division_name': division.get('division_name', ''),
-                    'season_type': division.get('season_type', ''),
-                    'display_name': division.get('display_name', '')
+                    'season_name': season_name,
+                    'division_name': division_name,
+                    'season_type': season_type
                 }
                 json_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
             except Exception as e:
@@ -295,14 +329,16 @@ class GVSAScraper:
         """
         url = f"{self.BASE_URL}/standings.jsp"
         
-        # Build division parameter
+        # Build division parameter with exact spacing/padding as seen in mitm logs
+        # Format: "      2843,2025/2026 ,      2775,      2846,Fall 2025                     ,U17/18/19 Girls Elite         ,F"
+        # IDs: 10 chars (7 spaces + 3-4 digits), Names: 30 chars, Year: 10 chars (with trailing space)
         division_param = (
-            f"{division['division_id']},"
-            f"{division['year_season']},"
-            f"{division['season_id1']},"
-            f"{division['season_id2']},"
-            f"{division['season_name']},"
-            f"{division['division_name']},"
+            f"{str(division['division_id']):>10},"
+            f"{division['year_season']} ,"
+            f"{str(division['season_id1']):>10},"
+            f"{str(division['season_id2']):>10},"
+            f"{division['season_name']:<30},"
+            f"{division['division_name']:<30},"
             f"{division['season_type']}"
         )
         
@@ -351,7 +387,8 @@ class GVSAScraper:
                 # Small delay to be polite to the server (only for network requests)
                 time.sleep(self.delay)
             except requests.RequestException as e:
-                print(f"Error fetching standings for {division['display_name']}: {e}")
+                display_name = division.get('display_name', division.get('division_name', 'unknown'))
+                print(f"Error fetching standings for {display_name}: {e}")
                 return None
             finally:
                 session.close()
@@ -382,7 +419,7 @@ class GVSAScraper:
         Optional[Dict[str, Any]]
             Parsed standings data or None if request fails
         """
-        display_name = division['display_name']
+        display_name = division.get('display_name', division.get('division_name', 'unknown'))
         standings = self.get_standings(division, force_refresh=False)
         
         if standings:
@@ -399,11 +436,12 @@ class GVSAScraper:
         """
         Stage 1: Fetch and save all HTML files without parsing.
         This hits the server once to cache all HTML files.
+        Skips divisions that are already cached.
         
         Returns
         -------
         int
-            Number of HTML files fetched/cached
+            Number of HTML files fetched/cached (newly fetched, not already cached)
         """
         # First, get all available seasons
         seasons = self.get_seasons()
@@ -419,12 +457,13 @@ class GVSAScraper:
         
         total_fetched = 0
         total_divisions = 0
+        total_cached = 0
         
         # Fetch each season
         for season_idx, season in enumerate(seasons, 1):
             if season:
                 print(f"\n{'='*80}")
-                print(f"Season {season_idx}/{len(seasons)}: {season['season_name']} ({season['year_season']})")
+                print(f"Season {season_idx}/{len(seasons)}: {season['season_name']}")
                 print(f"{'='*80}")
             
             # Get divisions for this season
@@ -435,8 +474,17 @@ class GVSAScraper:
             
             total_divisions += len(divisions)
             
+            # Check how many are already cached
+            cached_count = sum(1 for div in divisions if self.get_cached_html(div))
+            total_cached += cached_count
+            
+            if cached_count == len(divisions):
+                print(f"\n✓ All {len(divisions)} divisions already cached, skipping...")
+                continue
+            
             # Fetch HTML in parallel (but don't parse)
-            print(f"\nFetching HTML for {len(divisions)} divisions with {self.max_workers} workers...")
+            remaining = len(divisions) - cached_count
+            print(f"\nFetching HTML for {remaining} divisions ({(len(divisions) - cached_count)} new, {cached_count} already cached) with {self.max_workers} workers...")
             
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 # Submit all tasks
@@ -458,13 +506,15 @@ class GVSAScraper:
                         if fetched:
                             total_fetched += 1
                     except Exception as e:
-                        print(f"Error fetching HTML for {division['display_name']}: {e}")
+                        display_name = division.get('display_name', division.get('division_name', 'unknown'))
+                        print(f"Error fetching HTML for {display_name}: {e}")
         
         print(f"\n{'='*80}")
         print("HTML Fetching Summary:")
         print(f"  Seasons processed: {len(seasons)}")
         print(f"  Total divisions: {total_divisions}")
-        print(f"  HTML files fetched/cached: {total_fetched}")
+        print(f"  Already cached: {total_cached}")
+        print(f"  HTML files newly fetched: {total_fetched}")
         
         return total_fetched
     
@@ -486,7 +536,7 @@ class GVSAScraper:
         bool
             True if HTML was fetched/saved, False otherwise
         """
-        display_name = division['display_name']
+        display_name = division.get('display_name', division.get('division_name', 'unknown'))
         
         # Check if already cached
         if self.get_cached_html(division):
@@ -495,13 +545,16 @@ class GVSAScraper:
         
         # Fetch from web
         url = f"{self.BASE_URL}/standings.jsp"
+        # Build division parameter with exact spacing/padding as seen in mitm logs
+        # Format: "      2843,2025/2026 ,      2775,      2846,Fall 2025                     ,U17/18/19 Girls Elite         ,F"
+        # IDs: 10 chars (7 spaces + 3-4 digits), Names: 30 chars, Year: 10 chars (with trailing space)
         division_param = (
-            f"{division['division_id']},"
-            f"{division['year_season']},"
-            f"{division['season_id1']},"
-            f"{division['season_id2']},"
-            f"{division['season_name']},"
-            f"{division['division_name']},"
+            f"{str(division['division_id']):>10},"
+            f"{division['year_season']} ,"
+            f"{str(division['season_id1']):>10},"
+            f"{str(division['season_id2']):>10},"
+            f"{division['season_name']:<30},"
+            f"{division['division_name']:<30},"
             f"{division['season_type']}"
         )
         
@@ -549,7 +602,7 @@ class GVSAScraper:
         
         all_standings: List[Dict[str, Any]] = []
         
-        # Walk through cache directory structure: html_cache/{year_season}/{season_name}/*.html
+        # Walk through cache directory structure: html_cache/{year}_{season_type}/*.html
         cache_files = list(self.CACHE_DIR.rglob("*.html"))
         
         if not cache_files:
@@ -623,31 +676,78 @@ class GVSAScraper:
                 try:
                     metadata_content = metadata_path.read_text(encoding='utf-8')
                     division_info = json.loads(metadata_content)
+                    # Handle old metadata format with year_season
+                    if 'year_season' in division_info and 'year' not in division_info:
+                        year_season = division_info.get('year_season', '')
+                        if '/' in year_season:
+                            division_info['year'] = year_season.split('/')[0]
+                        else:
+                            division_info['year'] = year_season
+                    # Normalize season_type if it's "F" or "S"
+                    if division_info.get('season_type') == 'F':
+                        division_info['season_type'] = 'Fall'
+                    elif division_info.get('season_type') == 'S':
+                        division_info['season_type'] = 'Spring'
+                    # Remove display_name if present (redundant with division_name)
+                    if 'display_name' in division_info:
+                        del division_info['display_name']
                 except Exception as e:
                     print(f"  - Warning: Could not read metadata for {cache_file.name}: {e}")
                     # Fall back to reconstructing from path
+                    # New structure: html_cache/{year}_{season_type}/{division_name}.html
                     parts = cache_file.parts
-                    if len(parts) >= 3:
-                        division_info = {
-                            'division_id': '',
-                            'year_season': parts[-3],
-                            'season_name': parts[-2],
-                            'division_name': cache_file.stem.replace('_', ' '),
-                            'season_type': 'F' if 'Fall' in parts[-2] else 'S',
-                            'display_name': cache_file.stem.replace('_', ' ')
-                        }
+                    if len(parts) >= 2:
+                        cache_dir_name = parts[-2]  # e.g., "2025_Fall"
+                        # Parse year and season type from directory name
+                        if '_' in cache_dir_name:
+                            year_str, season_type_str = cache_dir_name.rsplit('_', 1)
+                            # Normalize season_type to "Fall" or "Spring"
+                            season_type = season_type_str  # Already normalized in cache path
+                            season_name = f"{season_type_str} {year_str}"
+                            division_info = {
+                                'division_id': '',
+                                'year': year_str,
+                                'season_name': season_name,
+                                'division_name': cache_file.stem.replace('_', ' '),
+                                'season_type': season_type
+                            }
+                        else:
+                            # Fallback for old format
+                            division_info = {
+                                'division_id': '',
+                                'year': cache_dir_name,
+                                'season_name': cache_dir_name,
+                                'division_name': cache_file.stem.replace('_', ' '),
+                                'season_type': 'Fall'
+                            }
             else:
                 # No metadata file - reconstruct from path
+                # New structure: html_cache/{year}_{season_type}/{division_name}.html
                 parts = cache_file.parts
-                if len(parts) >= 3:
-                    division_info = {
-                        'division_id': '',
-                        'year_season': parts[-3],
-                        'season_name': parts[-2],
-                        'division_name': cache_file.stem.replace('_', ' '),
-                        'season_type': 'F' if 'Fall' in parts[-2] else 'S',
-                        'display_name': cache_file.stem.replace('_', ' ')
-                    }
+                if len(parts) >= 2:
+                    cache_dir_name = parts[-2]  # e.g., "2025_Fall"
+                    # Parse year and season type from directory name
+                    if '_' in cache_dir_name:
+                        year_str, season_type_str = cache_dir_name.rsplit('_', 1)
+                        # Normalize season_type to "Fall" or "Spring"
+                        season_type = season_type_str  # Already normalized in cache path
+                        season_name = f"{season_type_str} {year_str}"
+                        division_info = {
+                            'division_id': '',
+                            'year': year_str,
+                            'season_name': season_name,
+                            'division_name': cache_file.stem.replace('_', ' '),
+                            'season_type': season_type
+                        }
+                    else:
+                        # Fallback for old format
+                        division_info = {
+                            'division_id': '',
+                            'year': cache_dir_name,
+                            'season_name': cache_dir_name,
+                            'division_name': cache_file.stem.replace('_', ' '),
+                            'season_type': 'Fall'
+                        }
             
             # Parse HTML
             standings_data = parse_standings(html_content)
@@ -696,7 +796,7 @@ class GVSAScraper:
         for season_idx, season in enumerate(seasons, 1):
             if season:
                 print(f"\n{'='*80}")
-                print(f"Season {season_idx}/{len(seasons)}: {season['season_name']} ({season['year_season']})")
+                print(f"Season {season_idx}/{len(seasons)}: {season['season_name']}")
                 print(f"{'='*80}")
             
             # Get divisions for this season
@@ -731,7 +831,8 @@ class GVSAScraper:
                         if standings:
                             all_standings.append(standings)
                     except Exception as e:
-                        print(f"Error processing {division['display_name']}: {e}")
+                        display_name = division.get('display_name', division.get('division_name', 'unknown'))
+                        print(f"Error processing {display_name}: {e}")
         
         print(f"\n{'='*80}")
         print("Scraping Summary:")

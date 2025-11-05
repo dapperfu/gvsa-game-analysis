@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from pony.orm import db_session, select, commit
 import re
 from thefuzz import fuzz, process
-from models import db, Season, Division, Club, Team, TeamSeason, Match
+from models import db, Season, Division, Club, Team, TeamSeason, Match, SeasonType
 from team_name_parser import parse_team_name, normalize_team_identifier, extract_base_identifier
 
 
@@ -255,31 +255,39 @@ class GVSA_Database:
             db.generate_mapping(create_tables=True)
     
     @db_session
-    def get_or_create_season(self, year_season: str, season_name: str, 
+    def get_or_create_season(self, year: int, season_name: str, 
                             season_type: str) -> Season:
         """
         Get or create a season.
         
         Parameters
         ----------
-        year_season : str
-            Year range (e.g., "2025/2026")
+        year : int
+            Year (e.g., 2025)
         season_name : str
             Season name (e.g., "Fall 2025")
         season_type : str
-            Season type (e.g., "F")
+            Season type: "Fall" or "Spring" (or "F"/"S" for short)
             
         Returns
         -------
         Season
             Season entity
         """
+        # Normalize season_type to SeasonType enum
+        if season_type == 'F' or season_type == 'Fall':
+            season_type_enum = SeasonType.Fall
+        elif season_type == 'S' or season_type == 'Spring':
+            season_type_enum = SeasonType.Spring
+        else:
+            raise ValueError(f"Invalid season_type: {season_type}. Must be 'Fall' or 'Spring'")
+        
         # Use select() instead of get() to handle multiple matches
+        # Compare against string value since DB stores as string
         seasons = list(select(
             s for s in Season
-            if s.year_season == year_season
-            and s.season_name == season_name
-            and s.season_type == season_type
+            if s.year == year
+            and s._season_type == season_type_enum.value
         ))
         
         if seasons:
@@ -287,13 +295,49 @@ class GVSA_Database:
             season = seasons[0]
         else:
             season = Season(
-                year_season=year_season,
+                year=year,
                 season_name=season_name,
-                season_type=season_type
+                _season_type=season_type_enum.value  # Set internal field directly
             )
             commit()
         
         return season
+    
+    @db_session
+    def get_season(self, year: int, season_type: str) -> Optional[Season]:
+        """
+        Get a season by year and season type.
+        
+        Simple query: year=2025, season_type="Fall"
+        
+        Parameters
+        ----------
+        year : int
+            Year (e.g., 2025)
+        season_type : str
+            Season type: "Fall" or "Spring" (or "F"/"S" for short)
+            
+        Returns
+        -------
+        Optional[Season]
+            Season entity or None if not found
+        """
+        # Normalize season_type to SeasonType enum
+        if season_type == 'F' or season_type == 'Fall':
+            season_type_enum = SeasonType.Fall
+        elif season_type == 'S' or season_type == 'Spring':
+            season_type_enum = SeasonType.Spring
+        else:
+            raise ValueError(f"Invalid season_type: {season_type}. Must be 'Fall' or 'Spring'")
+        
+        # Compare against string value since DB stores as string
+        seasons = list(select(
+            s for s in Season
+            if s.year == year
+            and s._season_type == season_type_enum.value
+        ))
+        
+        return seasons[0] if seasons else None
     
     @db_session
     def get_or_create_division(self, division_id: str, division_name: str,
@@ -446,11 +490,49 @@ class GVSA_Database:
         """
         division_info = standings_data.get('division', {})
         
-        # Get or create season
+        # Extract year from season_name (e.g., "Spring 2019" -> 2019)
+        season_name = division_info.get('season_name', '')
+        year = None
+        if season_name:
+            import re
+            year_match = re.search(r'\b(20\d{2})\b', season_name)
+            if year_match:
+                try:
+                    year = int(year_match.group(1))
+                except ValueError:
+                    pass
+        
+        if year is None:
+            # Fallback: try to extract from year_season if still present
+            year_season = division_info.get('year_season', '')
+            if year_season:
+                year_str = year_season.split('/')[0] if '/' in year_season else year_season
+                try:
+                    year = int(year_str)
+                except ValueError:
+                    pass
+        
+        if year is None:
+            raise ValueError(f"Could not extract year from division info: {division_info}")
+        
+        # Get normalized season_type
+        season_type_str = division_info.get('season_type', 'Fall')
+        # Normalize if it's "F" or "S"
+        if season_type_str == 'F':
+            season_type_str = 'Fall'
+        elif season_type_str == 'S':
+            season_type_str = 'Spring'
+        # Also check season_name to ensure correctness
+        elif 'Spring' in season_name or 'spring' in season_name.lower():
+            season_type_str = 'Spring'
+        elif 'Fall' in season_name or 'fall' in season_name.lower():
+            season_type_str = 'Fall'
+        
+        # Get or create season (will convert to enum internally)
         season = self.get_or_create_season(
-            division_info.get('year_season', ''),
-            division_info.get('season_name', ''),
-            division_info.get('season_type', '')
+            year,
+            season_name,
+            season_type_str
         )
         
         # Get or create division

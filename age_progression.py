@@ -45,11 +45,18 @@ def calculate_age_group(birth_year: int, season_year: int, season_type: str) -> 
     Optional[Tuple[int, int]]
         (min_age, max_age) tuple representing age group, or None if calculation fails
     """
+    # Normalize season_type to handle enum values or strings
+    if isinstance(season_type, str):
+        season_type_upper = season_type.upper()
+    else:
+        # Handle enum
+        season_type_upper = str(season_type).upper()
+    
     # Determine the cutoff date to use
-    if season_type.upper() == 'F':
+    if season_type_upper in ('F', 'FALL'):
         # Fall season: use Aug 1 of the season start year
         cutoff_year = season_year
-    elif season_type.upper() == 'S':
+    elif season_type_upper in ('S', 'SPRING'):
         # Spring season: use Aug 1 of the previous calendar year
         # (Spring 2021 uses Aug 1, 2020 cutoff)
         cutoff_year = season_year - 1
@@ -130,7 +137,8 @@ def find_expected_divisions(birth_year: int, gender: str, season: Season) -> Lis
     if not season_year:
         return []
     
-    age_group = calculate_age_group(birth_year, season_year, season.season_type)
+    season_type_str = season.season_type.value
+    age_group = calculate_age_group(birth_year, season_year, season_type_str)
     if not age_group:
         return []
     
@@ -175,4 +183,5 @@ def get_age_group_label(age_group: Optional[Tuple[int, int]]) -> str:
         return f"U{min_age}"
     else:
         return f"U{min_age}/{max_age}"
+
 

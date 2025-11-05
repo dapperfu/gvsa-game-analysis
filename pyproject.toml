@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gvsa-scrape"
+version = "1.0.0"
+description = "CLI tool for scraping and analyzing GVSA soccer data"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    {name = "GVSA Scraper"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "mitmproxy>=10.0.0",
+    "beautifulsoup4>=4.12.0",
+    "requests>=2.31.0",
+    "lxml>=4.9.0",
+    "pony>=0.7.17",
+    "thefuzz>=0.19.0",
+    "python-Levenshtein>=0.21.0",
+    "selenium>=4.15.0",
+    "webdriver-manager>=4.0.0",
+    "jupyter>=1.0.0",
+    "notebook>=7.0.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    "click>=8.1.0",
+    "tabulate>=0.9.0",
+]
+
+[project.scripts]
+gvsa = "cli:main"
+
+[tool.setuptools]
+# Include all Python modules at root level
+py-modules = [
+    "cli",
+    "cli_output",
+    "scraper",
+    "scraper_selenium",
+    "db_pony",
+    "models",
+    "parse_seasons",
+    "parse_standings",
+    "parse_csv",
+    "team_progression",
+    "age_progression",
+    "team_name_parser",
+    "team_matching_candidates",
+    "analyze_clubs",
+]
+

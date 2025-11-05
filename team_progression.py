@@ -150,7 +150,7 @@ def track_team_progression(team: Optional[Team] = None,
             progression_map[age_group].append({
                 'season': division.season.season_name,
                 'year_season': division.season.year_season,
-                'season_type': division.season.season_type,
+                'season_type': division.season.season_type.value,
                 'division_name': division.division_name,
                 'division_id': division.id,
                 'team_name': team_season.team_name,
@@ -333,10 +333,11 @@ def build_team_record_across_seasons(birth_year: int, gender: str, club_name: st
         if ts.team == team
     ))
     
-    # Sort by season (year_season, season_type)
+    # Sort by season (year, season_type)
+    # Note: season_type is now an enum, but comparison still works
     team_seasons.sort(key=lambda ts: (
-        ts.division.season.year_season,
-        ts.division.season.season_type
+        ts.division.season.year,
+        ts.division.season.season_type.value
     ))
     
     # Group by season and build record
@@ -354,14 +355,15 @@ def build_team_record_across_seasons(birth_year: int, gender: str, club_name: st
             season_year = extract_season_year(season)
             expected_age_group = None
             if season_year:
-                age_group_tuple = calculate_age_group(birth_year, season_year, season.season_type)
+                season_type_str = season.season_type.value
+                age_group_tuple = calculate_age_group(birth_year, season_year, season_type_str)
                 if age_group_tuple:
                     expected_age_group = get_age_group_label(age_group_tuple)
             
             season_records[season_key] = {
                 'season_name': season.season_name,
                 'year_season': season.year_season,
-                'season_type': season.season_type,
+                'season_type': season.season_type.value,
                 'expected_age_group': expected_age_group,
                 'actual_divisions': [],
                 'stats': {
@@ -445,10 +447,11 @@ def find_team_lineage(team: Team) -> List[TeamSeason]:
         if ts.team == team
     ))
     
-    # Sort by season (year_season, season_type), then by division name
+    # Sort by season (year, season_type), then by division name
+    # Note: season_type is now an enum, but comparison still works
     team_seasons.sort(key=lambda ts: (
-        ts.division.season.year_season,
-        ts.division.season.season_type,
+        ts.division.season.year,
+        ts.division.season.season_type.value,
         ts.division.division_name
     ))
     

@@ -152,20 +152,28 @@ class GVSAScraperSelenium:
             except (NoSuchElementException, TimeoutException) as e:
                 print(f"  ⚠ Could not select season: {e}")
             
-            # Step 2: Navigate to standings page
+            # Step 2: Navigate to standings page (may already be there after season selection)
             url = f"{self.BASE_URL}/standings.jsp"
-            print(f"  Step 2: Loading {url}...")
-            self.driver.get(url)
-            time.sleep(2)  # Wait for page to load
+            current_url = self.driver.current_url
+            if 'standings.jsp' not in current_url:
+                print(f"  Step 2: Loading {url}...")
+                self.driver.get(url)
+                time.sleep(2)  # Wait for page to load
+            else:
+                print(f"  Step 2: Already on standings page")
+                time.sleep(2)
             
             # Select division from dropdown
+            # Format with exact spacing/padding as seen in mitm logs
+            # Format: "      2843,2025/2026 ,      2775,      2846,Fall 2025                     ,U17/18/19 Girls Elite         ,F"
+            # IDs: 10 chars (7 spaces + 3-4 digits), Names: 30 chars, Year: 10 chars (with trailing space)
             division_param = (
-                f"{division['division_id']},"
-                f"{division['year_season']},"
-                f"{division['season_id1']},"
-                f"{division['season_id2']},"
-                f"{division['season_name']},"
-                f"{division['division_name']},"
+                f"{str(division['division_id']):>10},"
+                f"{division['year_season']} ,"
+                f"{str(division['season_id1']):>10},"
+                f"{str(division['season_id2']):>10},"
+                f"{division['season_name']:<30},"
+                f"{division['division_name']:<30},"
                 f"{division['season_type']}"
             )
             
@@ -215,10 +223,25 @@ class GVSAScraperSelenium:
                     pass
                 
             except (NoSuchElementException, TimeoutException, ValueError) as e:
-                # Fallback: use direct GET request with division parameter
-                print(f"  Dropdown method failed ({e}), using direct URL...")
-                self.driver.get(f"{url}?division={division_param}")
-                time.sleep(3)
+                # Fallback: use POST request to standings.jsp
+                print(f"  Dropdown method failed, using POST request...")
+                # Use JavaScript to submit form or direct POST
+                self.driver.get(url)
+                time.sleep(2)
+                
+                # Try to find and fill a form
+                try:
+                    # Look for form with division input
+                    form = self.driver.find_element(By.TAG_NAME, "form")
+                    division_input = form.find_element(By.NAME, "division")
+                    division_input.clear()
+                    division_input.send_keys(division_param)
+                    form.submit()
+                    time.sleep(4)  # Wait for page to load
+                except:
+                    # Last resort: use JavaScript to set location
+                    self.driver.execute_script(f"window.location.href = '{url}?division={division_param}';")
+                    time.sleep(4)
             
             # Wait for tables to load
             try:
@@ -251,11 +274,34 @@ class GVSAScraperSelenium:
             # Additional wait for JavaScript to fully render
             time.sleep(3)
             
+            # Wait for network requests to complete (check for AJAX)
+            try:
+                # Wait for jQuery to finish (if used)
+                WebDriverWait(self.driver, 10).until(
+                    lambda d: d.execute_script("return jQuery.active == 0") if d.execute_script("return typeof jQuery !== 'undefined'") else True
+                )
+            except:
+                pass
+            
+            # Wait for document ready state
+            WebDriverWait(self.driver, 10).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            
             # Scroll back up and down again to ensure everything is loaded
             self.driver.execute_script("window.scrollTo(0, 0);")
             time.sleep(1)
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
+            time.sleep(3)  # Increased wait
+            
+            # One more check for row2 table
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "table#row2, table[id='row2']"))
+                )
+                print(f"  ✓ Found row2 table after scrolling and waiting")
+            except TimeoutException:
+                pass
             
             # Get the fully rendered HTML
             html_content = self.driver.page_source

@@ -49,11 +49,12 @@ def parse_seasons_list(html_content: str) -> List[Dict[str, str]]:
                     season_id1 = parts[1].strip() if len(parts) > 1 else ''
                     season_id2 = parts[2].strip() if len(parts) > 2 else ''
                     season_name = parts[3].strip()
-                    # Determine season type from name
-                    if 'Fall' in season_name:
-                        season_type = 'F'
-                    elif 'Spring' in season_name:
+                    # Determine season type from name (case-insensitive)
+                    season_name_lower = season_name.lower()
+                    if 'spring' in season_name_lower:
                         season_type = 'S'
+                    elif 'fall' in season_name_lower:
+                        season_type = 'F'
                     else:
                         season_type = 'F'  # Default to Fall
                     # Store full value for later use
@@ -62,7 +63,8 @@ def parse_seasons_list(html_content: str) -> List[Dict[str, str]]:
                     # Fallback: try to extract from text
                     year_season = parts[0].strip() if parts[0].strip() else text
                     season_name = text
-                    season_type = 'F' if 'Fall' in text else 'S'
+                    text_lower = text.lower()
+                    season_type = 'S' if 'spring' in text_lower else 'F'
                     seasons.add((year_season, season_name, season_type))
     
     # If no season selector, extract from divisions
@@ -138,15 +140,28 @@ def parse_divisions(html_content: str) -> List[Dict[str, Any]]:
         parts = value.split(',')
         if len(parts) >= 7:
             try:
+                season_name = parts[4].strip()
+                season_type_from_html = parts[6].strip()
+                
+                # Override season_type from HTML if it's wrong - check season_name instead
+                season_name_lower = season_name.lower()
+                if 'spring' in season_name_lower:
+                    season_type = 'S'
+                elif 'fall' in season_name_lower:
+                    season_type = 'F'
+                else:
+                    # Fall back to HTML value
+                    season_type = season_type_from_html if season_type_from_html in ('F', 'S') else 'F'
+                
                 divisions.append({
                     'division_id': parts[0].strip(),
-                    'year_season': parts[1].strip(),
+                    'year_season': parts[1].strip(),  # Keep for POST requests only
                     'season_id1': parts[2].strip(),
                     'season_id2': parts[3].strip(),
-                    'season_name': parts[4].strip(),
+                    'season_name': season_name,
                     'division_name': parts[5].strip(),
-                    'season_type': parts[6].strip(),
-                    'display_name': text
+                    'season_type': season_type,
+                    'display_name': text  # Display name from HTML option text
                 })
             except (IndexError, ValueError):
                 # Skip malformed entries
