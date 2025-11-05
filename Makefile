@@ -1,4 +1,4 @@
-.PHONY: help install clean test scrape analyze-clubs
+.PHONY: help install clean test scrape analyze-clubs install-cli
 
 # Python virtual environment
 VENV = venv_gvsa_scrape
@@ -11,6 +11,7 @@ DB = gvsa_data2.db
 help:
 	@echo "Available targets:"
 	@echo "  make install        - Create virtual environment and install dependencies"
+	@echo "  make install-cli    - Install GVSA CLI application"
 	@echo "  make scrape         - Run the scraper to fetch all data"
 	@echo "  make test           - Test the parser with extracted data"
 	@echo "  make analyze-clubs  - Analyze clubs and their performance"
@@ -23,6 +24,9 @@ ${VENV}:
 	${PIP} install -r requirements.txt
 
 install: ${VENV}
+
+install-cli: ${VENV}
+	${PIP} install -e .
 
 scrape: ${VENV}
 	${PYTHON} scraper.py ${DB}
