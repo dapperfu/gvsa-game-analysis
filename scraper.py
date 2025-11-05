@@ -539,8 +539,8 @@ class GVSAScraper:
                         display_name = division.get('display_name', division.get('division_name', 'unknown'))
                         print(f"[{div_idx}/{len(divisions)}] ✗ {display_name}: Error - {e}")
                     
-                    # Periodic progress update
-                    if completed_count % 10 == 0 or completed_count == len(divisions):
+                    # Periodic progress update (every 25 divisions or at completion)
+                    if completed_count % 25 == 0 or completed_count == len(divisions):
                         print(f"Progress: {completed_count}/{len(divisions)} divisions processed")
         
         print(f"\n{'='*80}")
@@ -579,9 +579,6 @@ class GVSAScraper:
             print(f"[{div_idx}/{total}] ⊘ {display_name}: Already cached (HTML + CSV)")
             return False
         
-        # Print progress when starting fetch
-        print(f"[{div_idx}/{total}] → {display_name}: Fetching HTML...")
-        
         # Fetch from web
         url = f"{self.BASE_URL}/standings.jsp"
         # Build division parameter with exact spacing/padding as seen in mitm logs
@@ -613,7 +610,6 @@ class GVSAScraper:
             self.save_html_cache(division, html_content)
             
             # Extract CSV link from HTML and download/cache CSV
-            print(f"[{div_idx}/{total}] → {display_name}: Fetching CSV...")
             csv_link = parse_csv_link(html_content)
             if csv_link:
                 try:
